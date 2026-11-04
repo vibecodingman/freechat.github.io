@@ -9,7 +9,8 @@
 </head>
 <body>
 
-<!-- ЭКРАН ВХОДА -->
+<div id="diag" class="diag" hidden></div>
+
 <section id="screen-auth" class="screen">
   <div class="auth-card">
     <div class="brand-lg"><span class="mark">К</span><span>Круг</span></div>
@@ -19,11 +20,10 @@
       <svg viewBox="0 0 48 48" width="19" height="19"><path fill="#4285F4" d="M45 24c0-1.6-.1-2.7-.4-4H24v7.5h12c-.2 2-1.5 5-4.4 7l6.7 5.2C42.2 36.2 45 30.7 45 24z"/><path fill="#34A853" d="M24 46c6.9 0 12.7-2.3 17-6.2l-6.7-5.2C31.9 36 28.2 37 24 37c-6.6 0-12.2-4.4-14.2-10.4l-7 5.4C7.2 40.7 15 46 24 46z"/><path fill="#FBBC05" d="M9.8 26.6c-.5-1.5-.8-3-.8-4.6s.3-3.1.8-4.6l-7-5.4C1 15.1 0 19.4 0 22s1 6.9 2.8 10z"/><path fill="#EA4335" d="M24 9c3.7 0 7 1.3 9.6 3.8l6-6C35.9 3 30.6 1 24 1 15 1 7.2 6.3 2.8 13l7 5.4C11.8 13.4 17.4 9 24 9z"/></svg>
       Войти через Google
     </button>
-    <p class="fine">Регистрация свободная и мгновенная. Отдельного пароля не нужно.</p>
+    <p class="fine">Регистрация свободная. Отдельного пароля не нужно.</p>
   </div>
 </section>
 
-<!-- ЭКРАН ЗАПОЛНЕНИЯ ПРОФИЛЯ -->
 <section id="screen-onboarding" class="screen">
   <div class="auth-card">
     <h1>Заполните профиль</h1>
@@ -35,7 +35,6 @@
   </div>
 </section>
 
-<!-- ОСНОВНОЙ ИНТЕРФЕЙС -->
 <section id="screen-app" class="screen">
   <header class="topbar">
     <div class="brand"><span class="mark small">К</span><span>Круг</span></div>
@@ -52,13 +51,12 @@
   <div class="banner" id="muteBanner" hidden></div>
 
   <main class="wrap">
-    <!-- ЛЕНТА -->
     <div class="pane active" id="pane-feed">
       <div class="card composer">
         <textarea id="postText" placeholder="О чём хотите рассказать?"></textarea>
         <div class="staged" id="staged"></div>
-        <div class="row between">
-          <div class="row gap">
+        <div class="row between wrap gap">
+          <div class="row gap wrap">
             <label class="chip"><input type="file" id="pickPhoto" accept="image/*" multiple hidden>Фото</label>
             <label class="chip"><input type="file" id="pickFile" multiple hidden>Файл</label>
             <label class="check"><input type="checkbox" id="allowComments" checked> Комментарии</label>
@@ -69,16 +67,14 @@
       <div id="feed"></div>
     </div>
 
-    <!-- ПРОСТРАНСТВА -->
     <div class="pane" id="pane-spaces">
-      <div class="row between mb">
+      <div class="row between mb wrap gap">
         <button class="btn ghost" id="showAllSpaces">Все пространства</button>
         <button class="btn primary" id="openSpaceModal">Создать пространство</button>
       </div>
       <div id="spaceView"></div>
     </div>
 
-    <!-- ЧАТЫ -->
     <div class="pane" id="pane-chats">
       <div class="chat-layout card">
         <div class="chat-list">
@@ -99,13 +95,8 @@
       </div>
     </div>
 
-    <!-- ПРОФИЛЬ -->
     <div class="pane" id="pane-me">
-      <div class="card pad">
-        <h2 id="meName">—</h2>
-        <p class="muted" id="meMeta"></p>
-        <div id="meStatus"></div>
-      </div>
+      <div class="card pad"><h2 id="meName">—</h2><p class="muted" id="meMeta"></p><div id="meStatus"></div></div>
       <div class="card pad">
         <h3>Настройки</h3>
         <label class="field"><span>Имя</span><input id="setName"></label>
@@ -120,9 +111,12 @@
         </label>
         <button class="btn primary" id="saveProfile">Сохранить</button>
       </div>
+      <div class="card pad"><h3>Мои предупреждения</h3><div id="myWarns" class="muted">Загрузка…</div></div>
       <div class="card pad">
-        <h3>Мои предупреждения</h3>
-        <div id="myWarns" class="muted">Загрузка…</div>
+        <h3>Проверка подключения</h3>
+        <p class="muted">Нажмите, чтобы проверить базу и хранилище. Если что-то красное — значит нужный шаг настройки не выполнен.</p>
+        <button class="btn ghost" id="runDiag">Проверить</button>
+        <div id="diagOut" class="muted mt"></div>
       </div>
       <div class="card pad">
         <h3>Поддержка</h3>
@@ -131,12 +125,8 @@
       </div>
     </div>
 
-    <!-- МОДЕРАЦИЯ -->
     <div class="pane" id="pane-mod">
-      <div class="card pad">
-        <h2>Панель модерации</h2>
-        <p class="muted">Доступ только владельцу и совладельцам.</p>
-      </div>
+      <div class="card pad"><h2>Панель модерации</h2><p class="muted">Доступ только владельцу и совладельцам.</p></div>
       <div class="card pad"><h3>Жалобы</h3><div id="reportList"></div></div>
       <div class="card pad"><h3>Отложенные удаления</h3><div id="deletionList"></div></div>
       <div class="card pad"><h3>Верификация и роли</h3>
@@ -159,10 +149,10 @@
     <button class="tab" data-tab="spaces">Пространства</button>
     <button class="tab" data-tab="chats">Чаты</button>
     <button class="tab" data-tab="me">Профиль</button>
+    <button class="tab staff-only" data-tab="mod" hidden>Модерация</button>
   </nav>
 </section>
 
-<!-- МОДАЛКА СОЗДАНИЯ ПРОСТРАНСТВА -->
 <div class="modal" id="spaceModal" hidden>
   <div class="modal-box">
     <h3>Новое пространство</h3>
@@ -171,7 +161,7 @@
         <option value="channel">Канал — посты автора и комментарии</option>
         <option value="community">Сообщество — пишут все участники</option>
       </select></label>
-    <label class="field"><span>Название</span><input id="spName" maxlength="60"></label>
+    <label class="field"><span>Название</span><input id="spName" maxlength="60" placeholder="Например, «Омск: объявления»"></label>
     <label class="field"><span>Описание</span><input id="spDesc" maxlength="200"></label>
     <label class="field"><span>Доступ</span>
       <select id="spPrivacy">
@@ -179,7 +169,7 @@
         <option value="private">Закрытое — нужна галочка верификации</option>
       </select></label>
     <label class="field check"><input type="checkbox" id="spComments" checked> Разрешить комментарии</label>
-    <div class="row gap end">
+    <div class="row gap end mt">
       <button class="btn ghost" id="closeSpaceModal">Отмена</button>
       <button class="btn primary" id="createSpace">Создать</button>
     </div>

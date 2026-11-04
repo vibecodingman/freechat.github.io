@@ -1,4 +1,5 @@
-/* Настройки подключения. Эти данные публичные — они всё равно видны в браузере. */
+/* Публичные настройки. Их можно держать в коде — они всё равно видны в браузере.
+   Секретный ключ (service_role) сюда вставлять НЕЛЬЗЯ. */
 window.CONFIG = {
   SUPABASE_URL: 'https://uikanilmlquwziptlgrr.supabase.co',
   SUPABASE_ANON_KEY: 'sb_publishable_Sj1RDipj1LrJpyiX_IU0_g_XjnYxyMn',
