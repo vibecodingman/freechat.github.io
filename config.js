@@ -1,8 +1,13 @@
-/* Публичные настройки. Их можно держать в коде — они всё равно видны в браузере.
-   Секретный ключ (service_role) сюда вставлять НЕЛЬЗЯ. */
+/* Публичные настройки. Они всё равно видны в браузере, поэтому лежат прямо здесь.
+   Секретный ключ service_role сюда вставлять НЕЛЬЗЯ. */
 window.CONFIG = {
   SUPABASE_URL: 'https://uikanilmlquwziptlgrr.supabase.co',
   SUPABASE_ANON_KEY: 'sb_publishable_Sj1RDipj1LrJpyiX_IU0_g_XjnYxyMn',
   APP_NAME: 'Круг',
-  MAX_FILE_BYTES: 100 * 1024 * 1024
+  MAX_FILE_BYTES: 100 * 1024 * 1024,
+
+  /* Какие кнопки входа показывать.
+     Поставьте false тому способу, который не включён в Supabase — кнопка просто исчезнет.
+     Проверенный способ входа обязательно оставьте включённым. */
+  PROVIDERS: { github: true, google: true, email: true }
 };

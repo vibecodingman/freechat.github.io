@@ -1,6 +1,7 @@
 /* ============================================================
-   Круг — клиентская логика. GitHub Pages + Supabase.
-   Версия 1.1: исправлено создание пространств и видимые ошибки.
+   Круг — версия 1.2. GitHub Pages + Supabase.
+   Что нового: на входе три способа — GitHub, Google и ссылка на почту.
+   Ошибки входа показываются по-русски прямо на экране.
    ============================================================ */
 (function () {
 'use strict';
@@ -13,7 +14,7 @@ function reportError(msg) {
   var d = document.getElementById('diag');
   if (!d) return;
   d.hidden = false;
-  d.textContent = 'Ошибка: ' + String(msg || 'неизвестная').slice(0, 500) + '  (нажмите, чтобы скрыть)';
+  d.textContent = 'Ошибка: ' + String(msg || 'неизвестная').slice(0, 600) + '  (нажмите, чтобы скрыть)';
   d.onclick = function () { d.hidden = true; };
 }
 window.addEventListener('error', function (e) { reportError(e.message || e.type); });
@@ -35,7 +36,7 @@ var dateF = function (t) { return new Date(t).toLocaleString('ru-RU', { day: 'nu
 var ini = function (n) { return esc(String(n || '?').trim().charAt(0).toUpperCase() || '?'); };
 
 if (!window.supabase) {
-  reportError('Не загрузился клиент Supabase. Проверьте интернет или отключите блокировщик.');
+  reportError('Не загрузился клиент Supabase. Проверьте интернет или отключите блокировщик рекламы.');
   return;
 }
 var sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, {
@@ -56,9 +57,9 @@ function toast(msg) {
   t.textContent = String(msg);
   t.classList.add('show');
   clearTimeout(t._h);
-  t._h = setTimeout(function () { t.classList.remove('show'); }, 3800);
+  t._h = setTimeout(function () { t.classList.remove('show'); }, 4200);
 }
-/* одинаковая ошибка выводится и всплывашкой, и полосой сверху */
+/* одна и та же ошибка выводится и всплывашкой, и полосой сверху */
 function fail(msg) { toast(msg); reportError(msg); }
 
 function showScreen(id) {
@@ -80,15 +81,74 @@ function showTab(name) {
   if (name === 'mod') loadModeration();
 }
 
-/* ---------------- ВХОД ---------------- */
-$('#signInGoogle').onclick = function () {
+/* ================= ВХОД ================= */
+var PROV = CFG.PROVIDERS || { github: true, google: true, email: true };
+var PROV_RU = { github: 'GitHub', google: 'Google', email: 'почту' };
+
+/* Supabase отдаёт текст ошибки по-английски, иногда целым JSON — переводим в понятное. */
+function humanAuthError(raw) {
+  var msg = String(raw || '').trim();
+  try { var j = JSON.parse(msg); msg = j.msg || j.error_description || j.error || msg; } catch (e) {}
+  if (/unsupported provider/i.test(msg)) {
+    return 'Этот способ входа не включён в Supabase. Откройте Authentication → Providers, включите провайдера и вставьте Client ID и Secret.';
+  }
+  if (/redirect|not allowed|invalid.*url|url.*invalid/i.test(msg)) {
+    return 'Адрес сайта не разрешён в Supabase. Authentication → URL Configuration: добавьте его в Site URL и в Redirect URLs.';
+  }
+  if (/rate limit|too many/i.test(msg)) {
+    return 'Слишком много попыток. Подождите минуту и повторите.';
+  }
+  return 'Вход не сработал: ' + msg;
+}
+
+function signIn(provider) {
+  if (PROV[provider] === false) {
+    return fail('Вход через ' + (PROV_RU[provider] || provider) + ' выключен в файле config.js');
+  }
   var back = location.origin + location.pathname;
-  sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: back } })
-    .then(function (r) { if (r.error) fail('Вход не сработал: ' + r.error.message); });
+  sb.auth.signInWithOAuth({ provider: provider, options: { redirectTo: back } })
+    .then(function (r) { if (r.error) fail(humanAuthError(r.error.message)); });
+}
+
+if ($('#signInGitHub')) $('#signInGitHub').onclick = function () { signIn('github'); };
+if ($('#signInGoogle')) $('#signInGoogle').onclick = function () { signIn('google'); };
+
+if ($('#signInEmail')) $('#signInEmail').onclick = async function () {
+  try {
+    var em = ($('#emailInput').value || '').trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) return toast('Введите адрес почты');
+    var r = await sb.auth.signInWithOtp({
+      email: em,
+      options: { emailRedirectTo: location.origin + location.pathname, shouldCreateUser: true }
+    });
+    if (r.error) return fail(humanAuthError(r.error.message));
+    $('#authHint').textContent = 'Ссылка отправлена на ' + em + '. Откройте письмо и нажмите кнопку — вход произойдёт сам.';
+    toast('Письмо отправлено');
+  } catch (e) { fail(e.message || e); }
 };
-$('#signOut').onclick = function () { sb.auth.signOut().then(function () { location.reload(); }); };
+
+if ($('#signOut')) $('#signOut').onclick = function () { sb.auth.signOut().then(function () { location.reload(); }); };
+
+/* Прячем кнопки способов, которые выключены в config.js */
+if (PROV.github === false && $('#signInGitHub')) $('#signInGitHub').hidden = true;
+if (PROV.google === false && $('#signInGoogle')) $('#signInGoogle').hidden = true;
+if (PROV.email  === false && $('#signInEmail'))  $('#signInEmail').hidden = true;
+
+/* Supabase умеет присылать ошибку прямо в адресе страницы — покажем её по-русски. */
+function checkUrlErrors() {
+  var q = new URLSearchParams(location.search || '');
+  var h = new URLSearchParams(String(location.hash || '').replace(/^#/, ''));
+  var msg = q.get('error_description') || h.get('error_description') ||
+            q.get('msg') || h.get('msg') || q.get('error_code') || h.get('error_code') ||
+            q.get('error') || h.get('error');
+  if (!msg) return false;
+  fail(humanAuthError(decodeURIComponent(String(msg).replace(/\+/g, ' '))));
+  history.replaceState({}, '', location.pathname);
+  return true;
+}
 
 async function boot() {
+  checkUrlErrors();
   var s = await sb.auth.getSession();
   if (!s.data.session) { showScreen('auth'); return; }
   await afterLogin(s.data.session.user);
@@ -96,19 +156,30 @@ async function boot() {
 
 async function afterLogin(user) {
   var r = await sb.from('profiles').select('*').eq('id', user.id).maybeSingle();
-  if (r.error) { fail('Не читается таблица profiles: ' + r.error.message + '. Выполнен ли SQL-скрипт?'); showScreen('auth'); return; }
+  if (r.error) {
+    fail('Не читается таблица profiles: ' + r.error.message + '. Выполнен ли SQL-скрипт из supabase-schema.sql?');
+    showScreen('auth'); return;
+  }
   ME = r.data;
   if (!ME) {
     var md = user.user_metadata || {};
+    var email = user.email || '';
     var ins = await sb.from('profiles').insert({
       id: user.id,
-      display_name: md.full_name || md.name || (user.email || '').split('@')[0],
+      display_name: md.full_name || md.name || md.user_name || md.preferred_username || email.split('@')[0],
+      username: null,
       avatar_url: md.avatar_url || null
     }).select().maybeSingle();
     if (ins.error) { fail('Профиль не создался: ' + ins.error.message); showScreen('auth'); return; }
     ME = ins.data;
   }
-  if (!ME.username) { showScreen('onboarding'); $('#obName').value = ME.display_name || ''; return; }
+  if (!ME.username) {
+    showScreen('onboarding');
+    $('#obName').value = ME.display_name || '';
+    var hint = (user.user_metadata && (user.user_metadata.user_name || user.user_metadata.preferred_username)) || '';
+    $('#obUser').value = String(hint).toLowerCase().replace(/[^a-z0-9_.]/g, '').slice(0, 24);
+    return;
+  }
   showScreen('app');
   if (isStaff()) $$('.staff-only').forEach(function (b) { b.hidden = false; });
   renderIdentity();
@@ -144,7 +215,7 @@ $('#saveOnboarding').onclick = async function () {
   } catch (e) { fail(e.message || e); }
 };
 
-/* ---------------- ВЛОЖЕНИЯ ---------------- */
+/* ================= ВЛОЖЕНИЯ ================= */
 function addStaged(files) {
   if (!ME) return toast('Сначала войдите в аккаунт');
   Array.prototype.forEach.call(files, function (f) {
@@ -165,8 +236,8 @@ document.addEventListener('click', function (e) {
   var btn = e.target.closest('[data-unstage]');
   if (btn) { STAGED.splice(+btn.dataset.unstage, 1); renderStaged(); }
 });
-$('#pickPhoto').onchange = function () { addStaged(this.files); this.value = ''; };
-$('#pickFile').onchange = function () { addStaged(this.files); this.value = ''; };
+if ($('#pickPhoto')) $('#pickPhoto').onchange = function () { addStaged(this.files); this.value = ''; };
+if ($('#pickFile'))  $('#pickFile').onchange  = function () { addStaged(this.files); this.value = ''; };
 
 async function uploadStaged() {
   var out = [];
@@ -194,7 +265,7 @@ async function signPaths(items) {
   (r.data || []).forEach(function (s) { if (s && s.signedUrl) SIGNED[s.path] = s.signedUrl; });
 }
 
-/* ---------------- ПОСТЫ ---------------- */
+/* ================= ПОСТЫ ================= */
 var POST_SELECT =
   'id,content,created_at,comments_enabled,author_id,space_id,' +
   'author:profiles!posts_author_id_fkey(display_name,username,is_verified),' +
@@ -305,7 +376,7 @@ async function publishPost(spaceId) {
 }
 $('#publish').onclick = function () { publishPost(null); };
 
-/* ---------------- ПРОСТРАНСТВА ---------------- */
+/* ================= ПРОСТРАНСТВА ================= */
 async function loadSpaces() {
   try {
     var r = await sb.from('spaces')
@@ -431,21 +502,19 @@ async function loadRequests(spaceId) {
   }).join('') || '<div class="sub">Новых заявок нет.</div>';
 }
 
-function openSpaceModal() {
-  if (!ME) { toast('Сначала войдите через Google'); showScreen('auth'); return; }
-  $('#spaceModal').hidden = false;
-}
 function closeSpaceModal() { $('#spaceModal').hidden = true; }
 
-$('#openSpaceModal').onclick = openSpaceModal;
+$('#openSpaceModal').onclick = function () {
+  if (!ME) { toast('Сначала войдите'); showScreen('auth'); return; }
+  $('#spaceModal').hidden = false;
+};
 $('#closeSpaceModal').onclick = closeSpaceModal;
 $('#spaceModal').onclick = function (e) { if (e.target === $('#spaceModal')) closeSpaceModal(); };
 $('#showAllSpaces').onclick = function () { CURRENT_SPACE = null; loadSpaces(); };
 
 $('#createSpace').onclick = async function () {
   try {
-    if (!ME) { fail('Вы не вошли в аккаунт. Обновите страницу и войдите через Google.'); closeSpaceModal(); return; }
-
+    if (!ME) { fail('Вы не вошли в аккаунт. Обновите страницу и войдите.'); closeSpaceModal(); return; }
     var name = $('#spName').value.trim();
     if (!name) return toast('Введите название');
 
@@ -473,7 +542,7 @@ $('#createSpace').onclick = async function () {
   } catch (e) { fail('Сбой при создании: ' + (e.message || e)); }
 };
 
-/* ---------------- ЧАТЫ ---------------- */
+/* ================= ЧАТЫ ================= */
 async function loadConversations() {
   try {
     var mem = await sb.from('conversation_members').select('conversation_id').eq('user_id', ME.id);
@@ -612,7 +681,7 @@ $('#openSupport').onclick = async function () {
   } catch (e) { fail(e.message || e); }
 };
 
-/* ---------------- ПРОФИЛЬ ---------------- */
+/* ================= ПРОФИЛЬ ================= */
 function renderMe() {
   $('#meName').textContent = ME.display_name || 'Без имени';
   $('#meMeta').textContent = '@' + (ME.username || '—') +
@@ -653,7 +722,7 @@ $('#saveProfile').onclick = async function () {
   } catch (e) { fail(e.message || e); }
 };
 
-/* ---------------- ЖАЛОБЫ ---------------- */
+/* ================= ЖАЛОБЫ ================= */
 async function reportPost(postId) {
   if (!ME) return toast('Сначала войдите');
   if (!ME.can_report) return toast('Подача жалоб недоступна');
@@ -663,11 +732,11 @@ async function reportPost(postId) {
   var r = await sb.from('reports').insert({
     reporter_id: ME.id, post_id: postId, space_id: (p && p.space_id) || null, reason: reason.trim()
   });
-  fail(r.error ? 'Жалоба не отправлена: ' + r.error.message : '');
-  if (!r.error) toast('Жалоба отправлена владельцу и совладельцам');
+  if (r.error) return fail('Жалоба не отправлена: ' + r.error.message);
+  toast('Жалоба отправлена владельцу и совладельцам');
 }
 
-/* ---------------- МОДЕРАЦИЯ ---------------- */
+/* ================= МОДЕРАЦИЯ ================= */
 async function loadModeration() {
   if (!isStaff()) return;
   var r = await sb.from('reports')
@@ -716,11 +785,15 @@ $$('[data-staff]').forEach(function (btn) {
         res = await sb.rpc('issue_warning', { target: p.data.id, why: why });
       }
       $('#staffResult').textContent = (res && (res.error ? 'Ошибка: ' + res.error.message : res.data)) || 'Готово';
+      if (ME.id === p.data.id) {
+        var fresh = await sb.from('profiles').select('*').eq('id', ME.id).maybeSingle();
+        if (fresh.data) { ME = fresh.data; renderMe(); renderIdentity(); }
+      }
     } catch (e) { fail(e.message || e); }
   };
 });
 
-/* ---------------- ОБРАБОТЧИК КЛИКОВ ---------------- */
+/* ================= ОБРАБОТЧИК КЛИКОВ ================= */
 document.addEventListener('click', async function (e) {
   var t = e.target.closest('[data-like],[data-cmt],[data-report],[data-del],[data-open-space],[data-back-spaces],[data-join],[data-invite],[data-del-space],[data-conv],[data-verdict],[data-cancel-del],[data-open-support],[data-req],[data-member-admin],[data-member-kick],[data-member-ban],[data-comment-send]');
   if (!t) return;
@@ -734,7 +807,7 @@ document.addEventListener('click', async function (e) {
     if (CURRENT_SPACE) loadSpacePosts(); else loadFeed();
     return;
   }
-  if (d.cmt) { OPEN.has(d.cmt) ? OPEN.delete(d.cmt) : OPEN.add(d.cmt); if (CURRENT_SPACE) loadSpacePosts(); else loadFeed(); return; }
+  if (d.cmt) { if (OPEN.has(d.cmt)) OPEN.delete(d.cmt); else OPEN.add(d.cmt); if (CURRENT_SPACE) loadSpacePosts(); else loadFeed(); return; }
   if (d.report) return reportPost(d.report);
 
   if (d.del) {
@@ -810,12 +883,12 @@ document.addEventListener('click', async function (e) {
 
 $$('[data-tab]').forEach(function (b) { b.onclick = function () { showTab(b.dataset.tab); }; });
 
-/* ---------------- ПРОВЕРКА ПОДКЛЮЧЕНИЯ ---------------- */
+/* ================= ПРОВЕРКА ПОДКЛЮЧЕНИЯ ================= */
 $('#runDiag').onclick = async function () {
   var out = [];
   try {
     var u = await sb.auth.getUser();
-    out.push(u.data && u.data.user ? '✅ Вход: ' + u.data.user.email : '❌ Нет входа через Google');
+    out.push(u.data && u.data.user ? '✅ Вход выполнен: ' + u.data.user.email : '❌ Нет входа');
     var p = await sb.from('profiles').select('id').limit(1);
     out.push(p.error ? '❌ Таблица profiles: ' + p.error.message : '✅ Таблица profiles на месте');
     var s = await sb.from('spaces').select('id').limit(1);
@@ -826,6 +899,7 @@ $('#runDiag').onclick = async function () {
     out.push(st.error ? '❌ Хранилище attachments: ' + st.error.message : '✅ Хранилище attachments на месте');
     out.push('Права: ' + (ME && ME.is_owner ? 'владелец' : ME && ME.is_coowner ? 'совладелец' : 'обычный пользователь') +
       (ME && ME.is_verified ? ', есть галочка' : ''));
+    out.push('Кнопка GitHub: ' + (PROV.github === false ? 'выключена в config.js' : 'включена'));
   } catch (e) { out.push('❌ Сбой: ' + (e.message || e)); }
   $('#diagOut').innerHTML = out.join('<br>');
 };

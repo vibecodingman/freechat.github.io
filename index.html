@@ -16,11 +16,24 @@
     <div class="brand-lg"><span class="mark">К</span><span>Круг</span></div>
     <h1>Общение без лишнего</h1>
     <p class="muted">Публикуйте посты, создавайте каналы и сообщества, общайтесь лично.</p>
-    <button class="btn google" id="signInGoogle">
-      <svg viewBox="0 0 48 48" width="19" height="19"><path fill="#4285F4" d="M45 24c0-1.6-.1-2.7-.4-4H24v7.5h12c-.2 2-1.5 5-4.4 7l6.7 5.2C42.2 36.2 45 30.7 45 24z"/><path fill="#34A853" d="M24 46c6.9 0 12.7-2.3 17-6.2l-6.7-5.2C31.9 36 28.2 37 24 37c-6.6 0-12.2-4.4-14.2-10.4l-7 5.4C7.2 40.7 15 46 24 46z"/><path fill="#FBBC05" d="M9.8 26.6c-.5-1.5-.8-3-.8-4.6s.3-3.1.8-4.6l-7-5.4C1 15.1 0 19.4 0 22s1 6.9 2.8 10z"/><path fill="#EA4335" d="M24 9c3.7 0 7 1.3 9.6 3.8l6-6C35.9 3 30.6 1 24 1 15 1 7.2 6.3 2.8 13l7 5.4C11.8 13.4 17.4 9 24 9z"/></svg>
+
+    <button class="btn provider" id="signInGitHub">
+      <svg viewBox="0 0 16 16" width="19" height="19" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+      Войти через GitHub
+    </button>
+
+    <button class="btn provider" id="signInGoogle">
+      <svg viewBox="0 0 48 48" width="19" height="19" aria-hidden="true"><path fill="#4285F4" d="M45 24c0-1.6-.1-2.7-.4-4H24v7.5h12c-.2 2-1.5 5-4.4 7l6.7 5.2C42.2 36.2 45 30.7 45 24z"/><path fill="#34A853" d="M24 46c6.9 0 12.7-2.3 17-6.2l-6.7-5.2C31.9 36 28.2 37 24 37c-6.6 0-12.2-4.4-14.2-10.4l-7 5.4C7.2 40.7 15 46 24 46z"/><path fill="#FBBC05" d="M9.8 26.6c-.5-1.5-.8-3-.8-4.6s.3-3.1.8-4.6l-7-5.4C1 15.1 0 19.4 0 22s1 6.9 2.8 10z"/><path fill="#EA4335" d="M24 9c3.7 0 7 1.3 9.6 3.8l6-6C35.9 3 30.6 1 24 1 15 1 7.2 6.3 2.8 13l7 5.4C11.8 13.4 17.4 9 24 9z"/></svg>
       Войти через Google
     </button>
-    <p class="fine">Регистрация свободная. Отдельного пароля не нужно.</p>
+
+    <div class="or"><span>или по почте</span></div>
+
+    <label class="field"><span>Электронная почта</span>
+      <input id="emailInput" type="email" autocomplete="email" placeholder="pochta@example.com"></label>
+    <button class="btn provider" id="signInEmail">Прислать ссылку для входа</button>
+
+    <p class="fine" id="authHint">Регистрация свободная, пароль не нужен. GitHub в России открывается без VPN.</p>
   </div>
 </section>
 
@@ -96,8 +109,8 @@
     </div>
 
     <div class="pane" id="pane-me">
-      <div class="card pad"><h2 id="meName">—</h2><p class="muted" id="meMeta"></p><div id="meStatus"></div></div>
-      <div class="card pad">
+      <div class="card"><h2 id="meName">—</h2><p class="muted" id="meMeta"></p><div id="meStatus"></div></div>
+      <div class="card">
         <h3>Настройки</h3>
         <label class="field"><span>Имя</span><input id="setName"></label>
         <label class="field"><span>Имя пользователя</span><input id="setUser"></label>
@@ -111,14 +124,14 @@
         </label>
         <button class="btn primary" id="saveProfile">Сохранить</button>
       </div>
-      <div class="card pad"><h3>Мои предупреждения</h3><div id="myWarns" class="muted">Загрузка…</div></div>
-      <div class="card pad">
+      <div class="card"><h3>Мои предупреждения</h3><div id="myWarns" class="muted">Загрузка…</div></div>
+      <div class="card">
         <h3>Проверка подключения</h3>
-        <p class="muted">Нажмите, чтобы проверить базу и хранилище. Если что-то красное — значит нужный шаг настройки не выполнен.</p>
+        <p class="muted">Нажмите, чтобы проверить базу, хранилище и вход. Красные пункты показывают, какой шаг настройки пропущен.</p>
         <button class="btn ghost" id="runDiag">Проверить</button>
         <div id="diagOut" class="muted mt"></div>
       </div>
-      <div class="card pad">
+      <div class="card">
         <h3>Поддержка</h3>
         <p class="muted">Обращение увидят владелец и совладельцы. Ответ придёт от имени чата поддержки.</p>
         <button class="btn ghost" id="openSupport">Открыть чат поддержки</button>
@@ -126,10 +139,10 @@
     </div>
 
     <div class="pane" id="pane-mod">
-      <div class="card pad"><h2>Панель модерации</h2><p class="muted">Доступ только владельцу и совладельцам.</p></div>
-      <div class="card pad"><h3>Жалобы</h3><div id="reportList"></div></div>
-      <div class="card pad"><h3>Отложенные удаления</h3><div id="deletionList"></div></div>
-      <div class="card pad"><h3>Верификация и роли</h3>
+      <div class="card"><h2>Панель модерации</h2><p class="muted">Доступ только владельцу и совладельцам.</p></div>
+      <div class="card"><h3>Жалобы</h3><div id="reportList"></div></div>
+      <div class="card"><h3>Отложенные удаления</h3><div id="deletionList"></div></div>
+      <div class="card"><h3>Верификация и роли</h3>
         <label class="field"><span>Логин пользователя</span><input id="staffUser" placeholder="username"></label>
         <div class="row gap wrap">
           <button class="btn ghost" data-staff="verify">Выдать галочку</button>
@@ -140,13 +153,13 @@
         </div>
         <div id="staffResult" class="muted mt"></div>
       </div>
-      <div class="card pad"><h3>Обращения в поддержку</h3><div id="supportList"></div></div>
+      <div class="card"><h3>Обращения в поддержку</h3><div id="supportList"></div></div>
     </div>
   </main>
 
   <nav class="mobile-tabs" id="mobileTabs">
     <button class="tab active" data-tab="feed">Лента</button>
-    <button class="tab" data-tab="spaces">Пространства</button>
+    <button class="tab" data-tab="spaces">Простран.</button>
     <button class="tab" data-tab="chats">Чаты</button>
     <button class="tab" data-tab="me">Профиль</button>
     <button class="tab staff-only" data-tab="mod" hidden>Модерация</button>

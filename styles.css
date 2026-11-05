@@ -10,7 +10,7 @@ button,input,textarea,select{font:inherit;color:inherit}
 input,textarea,select{background:#fbfcfe;border:1px solid var(--line);border-radius:11px;padding:11px 12px;outline:0;width:100%}
 input:focus,textarea:focus,select:focus{border-color:#c3caf7;box-shadow:0 0 0 3px #5566f012}
 textarea{resize:vertical;min-height:64px}
-.muted{color:var(--muted);font-size:13px}.fine{color:#9aa6ae;font-size:12px;margin-top:14px}
+.muted{color:var(--muted);font-size:13px}.fine{color:#9aa6ae;font-size:12px;margin-top:14px;line-height:1.5}
 .grow{flex:1;min-width:0}.mt{margin-top:10px}.mb{margin-bottom:14px}
 .row{display:flex;align-items:center}.gap{gap:9px}.wrap{flex-wrap:wrap}.between{justify-content:space-between}.end{justify-content:flex-end}
 .screen{display:none}.screen.active{display:block}
@@ -23,7 +23,6 @@ textarea{resize:vertical;min-height:64px}
 .btn:hover{filter:brightness(.97)}
 .btn.primary{background:var(--accent);color:#fff;box-shadow:0 5px 14px #5566f030}
 .btn.ghost{background:#f1f3f7}
-.btn.google{background:#fff;border:1px solid var(--line);display:flex;align-items:center;gap:11px;justify-content:center;width:100%;color:var(--ink);box-shadow:var(--shadow)}
 .btn.wide{width:100%;margin-top:8px}
 .field{display:block;margin:12px 0}
 .field>span{display:block;font-size:12px;color:#66737e;font-weight:650;margin-bottom:5px}
@@ -95,4 +94,12 @@ textarea{resize:vertical;min-height:64px}
   .conv{min-width:150px}
   .mobile-tabs{display:flex;position:fixed;bottom:0;left:0;right:0;background:#fffffff5;backdrop-filter:blur(14px);border-top:1px solid var(--line);justify-content:space-around;padding:8px 4px calc(8px + env(safe-area-inset-bottom));z-index:30}
   .mobile-tabs .tab{font-size:11px;padding:7px 9px}
+  .auth-card{padding:24px 20px}
 }
+
+/* --- экран входа: три способа --- */
+.btn.provider{background:#fff;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;gap:11px;width:100%;color:var(--ink);box-shadow:var(--shadow);margin-top:9px}
+.btn.provider:hover{background:#fafbfe;border-color:#d9e0e7}
+.btn.provider[hidden]{display:none}
+.or{display:flex;align-items:center;gap:12px;color:#9aa6ae;font-size:12px;margin:18px 0 2px}
+.or:before,.or:after{content:"";height:1px;flex:1;background:var(--line)}
