@@ -101,11 +101,35 @@ function humanAuthError(raw) {
   return 'Вход не сработал: ' + msg;
 }
 
+/* ================= АДРЕС ВОЗВРАТА ================= */
+/* Куда Supabase вернёт после входа. Если SITE_URL в config.js пуст — берём адрес страницы. */
+function siteUrl() {
+  var u = String(CFG.SITE_URL || '').trim();
+  if (u) return u;
+  return location.origin + location.pathname;
+}
+
+function hashParams() {
+  return new URLSearchParams(String(location.hash || '').replace(/^#/, ''));
+}
+
+/* Supabase возвращает токен в адресе после #. Обычно клиент читает его сам,
+   но если не прочитал — ставим сессию вручную, чтобы вход не терялся. */
+async function adoptHashSession() {
+  var h = hashParams();
+  var at = h.get('access_token'), rt = h.get('refresh_token');
+  if (!at || !rt) return false;
+  var r = await sb.auth.setSession({ access_token: at, refresh_token: rt });
+  history.replaceState({}, '', location.pathname + location.search);
+  if (r.error) { fail('Вход получен, но не применился: ' + r.error.message); return false; }
+  return true;
+}
+
 function signIn(provider) {
   if (PROV[provider] === false) {
     return fail('Вход через ' + (PROV_RU[provider] || provider) + ' выключен в файле config.js');
   }
-  var back = location.origin + location.pathname;
+  var back = siteUrl();
   sb.auth.signInWithOAuth({ provider: provider, options: { redirectTo: back } })
     .then(function (r) { if (r.error) fail(humanAuthError(r.error.message)); });
 }
@@ -119,7 +143,7 @@ if ($('#signInEmail')) $('#signInEmail').onclick = async function () {
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) return toast('Введите адрес почты');
     var r = await sb.auth.signInWithOtp({
       email: em,
-      options: { emailRedirectTo: location.origin + location.pathname, shouldCreateUser: true }
+      options: { emailRedirectTo: siteUrl(), shouldCreateUser: true }
     });
     if (r.error) return fail(humanAuthError(r.error.message));
     $('#authHint').textContent = 'Ссылка отправлена на ' + em + '. Откройте письмо и нажмите кнопку — вход произойдёт сам.';
@@ -150,9 +174,25 @@ function checkUrlErrors() {
 async function boot() {
   checkUrlErrors();
   var s = await sb.auth.getSession();
-  if (!s.data.session) { showScreen('auth'); return; }
+  if (!s.data.session) {
+    if (await adoptHashSession()) s = await sb.auth.getSession();
+  }
+  if (!s.data.session) {
+    if (/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) {
+      reportError('Сайт открыт на localhost. Значит в Supabase → Authentication → URL Configuration в поле Site URL до сих пор стоит http://localhost:3000. Замените его на адрес сайта и добавьте тот же адрес в Redirect URLs.');
+    }
+    showScreen('auth');
+    return;
+  }
   await afterLogin(s.data.session.user);
 }
+
+/* Если вход случился уже после загрузки страницы — дорисовываем интерфейс. */
+sb.auth.onAuthStateChange(function (event, session) {
+  if (event === 'SIGNED_IN' && session && !ME) {
+    afterLogin(session.user).catch(function (e) { fail(e.message || e); });
+  }
+});
 
 async function afterLogin(user) {
   var r = await sb.from('profiles').select('*').eq('id', user.id).maybeSingle();
@@ -900,6 +940,10 @@ $('#runDiag').onclick = async function () {
     out.push('Права: ' + (ME && ME.is_owner ? 'владелец' : ME && ME.is_coowner ? 'совладелец' : 'обычный пользователь') +
       (ME && ME.is_verified ? ', есть галочка' : ''));
     out.push('Кнопка GitHub: ' + (PROV.github === false ? 'выключена в config.js' : 'включена'));
+    out.push('Адрес возврата после входа: ' + siteUrl());
+    out.push(/^(localhost|127\.0\.0\.1)$/.test(location.hostname)
+      ? '⚠️ Сайт открыт на localhost — в Supabase Site URL всё ещё http://localhost:3000'
+      : '✅ Сайт открыт по настоящему адресу');
   } catch (e) { out.push('❌ Сбой: ' + (e.message || e)); }
   $('#diagOut').innerHTML = out.join('<br>');
 };

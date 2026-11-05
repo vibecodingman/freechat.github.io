@@ -6,8 +6,14 @@ window.CONFIG = {
   APP_NAME: 'Круг',
   MAX_FILE_BYTES: 100 * 1024 * 1024,
 
+  /* Адрес сайта, куда Supabase вернёт после входа.
+     Впишите свой адрес GitHub Pages со слэшем на конце, например:
+       SITE_URL: 'https://vibecodingman.github.io/krug/'
+     Если оставить пустым — возьмётся адрес открытой страницы.
+     Этот же адрес должен стоять в Supabase → Authentication → URL Configuration. */
+  SITE_URL: '',
+
   /* Какие кнопки входа показывать.
-     Поставьте false тому способу, который не включён в Supabase — кнопка просто исчезнет.
-     Проверенный способ входа обязательно оставьте включённым. */
+     Поставьте false тому способу, который не включён в Supabase — кнопка просто исчезнет. */
   PROVIDERS: { github: true, google: true, email: true }
 };
