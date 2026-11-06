@@ -180,6 +180,110 @@
 
 <div id="toast" class="toast"></div>
 <script src="config.js"></script>
-<script src="app.js"></script>
+<!-- Загрузка библиотеки Supabase и запуск сайта.
+     Адреса пробуются по очереди: сначала копия с вашего сайта (vendor/supabase.js),
+     потом запасные CDN. Версия 2.45.4 зафиксирована, чтобы обновление не ломало сайт. -->
+<script>
+(function () {
+  var UMD = [
+    'vendor/supabase.js',
+    'https://gcore.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js' [2](#citation-fallback-1),
+    'https://fastly.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js' [3](#citation-fallback-2),
+    'https://unpkg.com/@supabase/supabase-js@2.45.4/dist/umd/supabase.js' [4](#citation-fallback-3),
+    'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js' [5](#citation-fallback-4)
+  ];
+  var ESM = [
+    'https://esm.sh/@supabase/supabase-js@2.45.4' [6](#citation-fallback-5),
+    'https://esm.run/@supabase/supabase-js@2.45.4' [7](#citation-fallback-6),
+    'https://cdn.skypack.dev/@supabase/supabase-js@2.45.4' [8](#citation-fallback-7)
+  ];
+  var WAIT = 6000, tried = [], slow = null;
+
+  function el() { return document.getElementById('diag'); }
+  function show(html) { var d = el(); if (!d) return; d.hidden = false; d.onclick = null; d.innerHTML = html; }
+  function hide() { var d = el(); if (d && /Supabase/i.test(d.textContent || '')) { d.textContent = ''; d.hidden = true; } }
+  function ok() { return window.supabase && typeof window.supabase.createClient === 'function'; }
+
+  function start(where) {
+    clearTimeout(slow);
+    try { localStorage.setItem('krug_supabase_from', where); } catch (e) {}
+    hide();
+    var a = document.createElement('script');
+    a.src = 'app.js';
+    (document.body || document.head).appendChild(a);
+  }
+
+  function died() {
+    clearTimeout(slow);
+    show('Не удалось загрузить библиотеку Supabase — ни один адрес не ответил.<br>' +
+         'Причина обычно одна: провайдер или блокировщик режет внешние CDN.<br><br>' +
+         '<b>Что делать:</b> положите файл supabase.js в папку <b>vendor</b> рядом с index.html — ' +
+         'тогда библиотека берётся с вашего сайта и внешние адреса не нужны.<br><br>' +
+         '<span class="muted">Проверено адресов: ' + tried.length + '</span><br>' +
+         '<button class="btn ghost" id="sbRetry">Повторить загрузку</button>');
+    var b = document.getElementById('sbRetry');
+    if (b) b.onclick = function () { hide(); tried = []; run(); };
+  }
+
+  function order() {
+    var list = UMD.slice(0), saved = null;
+    try { saved = localStorage.getItem('krug_supabase_from'); } catch (e) {}
+    var i = saved ? list.indexOf(saved) : -1;
+    if (i > 0) { list.splice(i, 1); list.unshift(saved); }
+    return list;
+  }
+
+  function viaScript(list, i) {
+    if (i >= list.length) return viaImport(0);
+    var url = list[i], done = false;
+    tried.push(url);
+    var s = document.createElement('script');
+    s.src = url;
+    s.async = false;
+    var t = setTimeout(next, WAIT);
+    function next() {
+      if (done) return;
+      done = true;
+      clearTimeout(t);
+      s.onload = s.onerror = null;
+      if (s.parentNode) s.parentNode.removeChild(s);
+      viaScript(list, i + 1);
+    }
+    s.onload = function () {
+      if (done) return;
+      clearTimeout(t);
+      if (ok()) { done = true; start(url); } else { next(); }
+    };
+    s.onerror = next;
+    document.head.appendChild(s);
+  }
+
+  function viaImport(k) {
+    if (k >= ESM.length) return died();
+    var url = ESM[k], done = false;
+    tried.push(url);
+    var t = setTimeout(function () { if (!done) { done = true; viaImport(k + 1); } }, WAIT + 3000);
+    import(url).then(function (m) {
+      if (done) return;
+      done = true;
+      clearTimeout(t);
+      var api = (m && typeof m.createClient === 'function') ? m
+              : (m && m.default && typeof m.default.createClient === 'function') ? m.default : null;
+      if (api) { window.supabase = api; start(url); } else { viaImport(k + 1); }
+    }).catch(function () {
+      if (done) return;
+      done = true;
+      clearTimeout(t);
+      viaImport(k + 1);
+    });
+  }
+
+  function run() {
+    slow = setTimeout(function () { show('Загружаю библиотеку Supabase…'); }, 2500);
+    viaScript(order(), 0);
+  }
+  run();
+})();
+</script>
 </body>
 </html>
