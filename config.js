@@ -7,7 +7,7 @@ window.CONFIG = {
   MAX_FILE_BYTES: 100 * 1024 * 1024,
 
   /* Адрес сайта, куда Supabase вернёт после входа. Впишите свой со слэшем на конце:
-       SITE_URL: 'https://vibecodingman.github.io/krug/' [2](#citation-fallback-1)
+       SITE_URL: 'https://vibecodingman.github.io/freechat.github.io/' [2](#citation-fallback-1)
      Если оставить пустым — возьмётся адрес открытой страницы.
      Этот же адрес должен стоять в Supabase → Authentication → URL Configuration. */
   SITE_URL: '',
