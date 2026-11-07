@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Круг</title>
 <link rel="stylesheet" href="styles.css">
-&lt;script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" [3](#citation-fallback-2)&gt;</script>
 </head>
 <body>
 
@@ -22,7 +21,7 @@
       Войти через GitHub
     </button>
 
-    <p class="fine" id="authHint">Аккаунт создаётся при первом входе, пароль не нужен. GitHub в России открывается без VPN.</p>
+    <p class="fine" id="authHint">Аккаунт создаётся при первом входе, пароль не нужен. GitHub открывается без VPN.</p>
   </div>
 </section>
 
@@ -180,110 +179,157 @@
 
 <div id="toast" class="toast"></div>
 <script src="config.js"></script>
-<!-- Загрузка библиотеки Supabase и запуск сайта.
-     Адреса пробуются по очереди: сначала копия с вашего сайта (vendor/supabase.js),
-     потом запасные CDN. Версия 2.45.4 зафиксирована, чтобы обновление не ломало сайт. -->
+<!-- ==== ЗАГРУЗКА БИБЛИОТЕКИ SUPABASE ====
+     Этот блок просто добывает библиотеку, через которую сайт разговаривает с базой данных.
+     Адреса запрашиваются параллельно: кто ответит первым — с того и грузим.
+     Так сайт открывается, даже если часть адресов у вас заблокирована
+     (в России cdn.jsdelivr.net режут часто — именно из-за него и была ошибка).
+     Первым в списке стоит своя копия: vendor/supabase.js. Положите туда файл —
+     и внешние адреса вообще не понадобятся.
+     Трогать этот блок не нужно. -->
 <script>
 (function () {
-  var UMD = [
+  'use strict';
+
+  var VER = '2.45.4';   /* версия зафиксирована: обновление на CDN не сможет сломать сайт */
+  var APP = 'app.js';   /* файл с кодом самого сайта */
+
+  /* обычные адреса (проверяются сразу все) */
+  var SCRIPT_SOURCES = [
     'vendor/supabase.js',
-    'https://gcore.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js' [2](#citation-fallback-1),
-    'https://fastly.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js' [3](#citation-fallback-2),
-    'https://unpkg.com/@supabase/supabase-js@2.45.4/dist/umd/supabase.js' [4](#citation-fallback-3),
-    'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js' [5](#citation-fallback-4)
+    'https://unpkg.com/@supabase/supabase-js@' + VER + '/dist/umd/supabase.js',
+    'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@' + VER + '/dist/umd/supabase.js',
+    'https://gcore.jsdelivr.net/npm/@supabase/supabase-js@' + VER + '/dist/umd/supabase.js',
+    'https://fastly.jsdelivr.net/npm/@supabase/supabase-js@' + VER + '/dist/umd/supabase.js',
+    'https://testingcf.jsdelivr.net/npm/@supabase/supabase-js@' + VER + '/dist/umd/supabase.js'
   ];
-  var ESM = [
-    'https://esm.sh/@supabase/supabase-js@2.45.4' [6](#citation-fallback-5),
-    'https://esm.run/@supabase/supabase-js@2.45.4' [7](#citation-fallback-6),
-    'https://cdn.skypack.dev/@supabase/supabase-js@2.45.4' [8](#citation-fallback-7)
-  ];
-  var WAIT = 6000, tried = [], slow = null;
 
-  function el() { return document.getElementById('diag'); }
-  function show(html) { var d = el(); if (!d) return; d.hidden = false; d.onclick = null; d.innerHTML = html; }
-  function hide() { var d = el(); if (d && /Supabase/i.test(d.textContent || '')) { d.textContent = ''; d.hidden = true; } }
-  function ok() { return window.supabase && typeof window.supabase.createClient === 'function'; }
+  var LIMIT = 25000;    /* сколько максимум ждём один адрес, миллисекунды */
+  var alive = SCRIPT_SOURCES.length, classicFailed = false, moduleFailed = false;
+  var started = false, why = '', guard = null;
 
-  function start(where) {
-    clearTimeout(slow);
-    try { localStorage.setItem('krug_supabase_from', where); } catch (e) {}
-    hide();
-    var a = document.createElement('script');
-    a.src = 'app.js';
-    (document.body || document.head).appendChild(a);
-  }
+  function box() { return document.getElementById('diag'); }
+  function show(html) { var d = box(); if (!d) return; d.hidden = false; d.onclick = null; d.innerHTML = html; }
+  function quiet() { var d = box(); if (d && /Supabase|Загружаю/i.test(d.textContent || '')) { d.textContent = ''; d.hidden = true; } }
+  function ready() { return !!(window.supabase && typeof window.supabase.createClient === 'function'); }
+  function note(url, because) { if (started) return; why += '❌ ' + url + ' — ' + because + '<br>'; }
 
-  function died() {
-    clearTimeout(slow);
-    show('Не удалось загрузить библиотеку Supabase — ни один адрес не ответил.<br>' +
-         'Причина обычно одна: провайдер или блокировщик режет внешние CDN.<br><br>' +
-         '<b>Что делать:</b> положите файл supabase.js в папку <b>vendor</b> рядом с index.html — ' +
-         'тогда библиотека берётся с вашего сайта и внешние адреса не нужны.<br><br>' +
-         '<span class="muted">Проверено адресов: ' + tried.length + '</span><br>' +
-         '<button class="btn ghost" id="sbRetry">Повторить загрузку</button>');
-    var b = document.getElementById('sbRetry');
-    if (b) b.onclick = function () { hide(); tried = []; run(); };
-  }
-
-  function order() {
-    var list = UMD.slice(0), saved = null;
-    try { saved = localStorage.getItem('krug_supabase_from'); } catch (e) {}
-    var i = saved ? list.indexOf(saved) : -1;
-    if (i > 0) { list.splice(i, 1); list.unshift(saved); }
-    return list;
-  }
-
-  function viaScript(list, i) {
-    if (i >= list.length) return viaImport(0);
-    var url = list[i], done = false;
-    tried.push(url);
+  function start(url) {
+    if (started) return;
+    started = true;
+    clearTimeout(guard);
+    try { window.KRUG_LIB_FROM = url; } catch (e) {}
+    quiet();
     var s = document.createElement('script');
+    s.src = APP;
+    s.onerror = function () { show('<b>Файл app.js не найден.</b> Он должен лежать рядом с index.html.'); };
+    (document.body || document.head).appendChild(s);
+  }
+
+  function report() {
+    if (started) return;
+    show('<b>Библиотека Supabase не загрузилась.</b><br>' +
+         'Запрос ушёл сразу на все адреса, ни один не ответил — значит провайдер или блокировщик режет сторонние сети.<br><br>' +
+         '<b>Лечение, один раз, минут пять:</b><br>' +
+         '1. Открой в браузере адрес gcore.jsdelivr.net/npm/@supabase/supabase-js@' + VER + '/dist/umd/supabase.js и убедись, что видишь длинный код из букв и символов, а не ошибку. ' +
+         'Если не открылся — попробуй тот же адрес, заменив начало на unpkg.com или esm.sh.<br>' +
+         '2. На открывшейся странице нажми <b>Ctrl+S</b> и сохрани файл под именем <b>supabase.js</b>.<br>' +
+         '3. Открой репозиторий сайта на GitHub: <b>Add file → Create new file</b>, в поле имени напиши <b>vendor/supabase.js</b> — папка создастся сама. ' +
+         'Можно и через <b>Add file → Upload files</b>, только сначала создай папку vendor.<br>' +
+         '4. Обнови сайт. Библиотека теперь лежит на твоём же сайте, и сторонние адреса не нужны совсем.<br><br>' +
+         '<button class="btn ghost" id="krugRetry">Повторить попытку</button>' +
+         '<div style="margin-top:10px;font-size:12px;color:#7c8794">' + why + '</div>');
+    var b = document.getElementById('krugRetry');
+    if (b) b.onclick = function () { why = ''; quiet(); launch(); };
+  }
+
+  function maybeReport() {
+    if (started) return;
+    if (classicFailed && moduleFailed) report();
+  }
+
+  function loadScript(url) {
+    var s = document.createElement('script'), over = false;
     s.src = url;
-    s.async = false;
-    var t = setTimeout(next, WAIT);
-    function next() {
-      if (done) return;
-      done = true;
-      clearTimeout(t);
-      s.onload = s.onerror = null;
-      if (s.parentNode) s.parentNode.removeChild(s);
-      viaScript(list, i + 1);
-    }
+    s.async = true;
+    var t = setTimeout(function () {
+      if (over) return;
+      over = true; alive--;
+      note(url, 'нет ответа');
+      if (alive <= 0) { classicFailed = true; maybeReport(); }
+    }, LIMIT);
     s.onload = function () {
-      if (done) return;
-      clearTimeout(t);
-      if (ok()) { done = true; start(url); } else { next(); }
+      if (over) return;
+      over = true; clearTimeout(t); alive--;
+      if (ready()) { start(url); return; }
+      note(url, 'загрузился, но библиотеки внутри нет');
+      if (alive <= 0) { classicFailed = true; maybeReport(); }
     };
-    s.onerror = next;
+    s.onerror = function () {
+      if (over) return;
+      over = true; clearTimeout(t); alive--;
+      note(url, 'заблокирован или ошибка 404');
+      if (alive <= 0) { classicFailed = true; maybeReport(); }
+    };
     document.head.appendChild(s);
   }
 
-  function viaImport(k) {
-    if (k >= ESM.length) return died();
-    var url = ESM[k], done = false;
-    tried.push(url);
-    var t = setTimeout(function () { if (!done) { done = true; viaImport(k + 1); } }, WAIT + 3000);
-    import(url).then(function (m) {
-      if (done) return;
-      done = true;
-      clearTimeout(t);
-      var api = (m && typeof m.createClient === 'function') ? m
-              : (m && m.default && typeof m.default.createClient === 'function') ? m.default : null;
-      if (api) { window.supabase = api; start(url); } else { viaImport(k + 1); }
-    }).catch(function () {
-      if (done) return;
-      done = true;
-      clearTimeout(t);
-      viaImport(k + 1);
-    });
+  /* модульная часть (отдельный тег ниже) сообщает о себе через этот объект */
+  window.KRUG_BOOT = {
+    ready: ready,
+    start: start,
+    note: note,
+    failed: function () { moduleFailed = true; maybeReport(); },
+    dead: function () { moduleFailed = true; maybeReport(); }
+  };
+
+  function launch() {
+    if (ready()) { start('уже загружена'); return; }
+    alive = SCRIPT_SOURCES.length;
+    classicFailed = false;
+    moduleFailed = false;
+    for (var i = 0; i < SCRIPT_SOURCES.length; i++) loadScript(SCRIPT_SOURCES[i]);
+    clearTimeout(guard);
+    guard = setTimeout(function () { if (!started) report(); }, LIMIT + 6000);
   }
 
-  function run() {
-    slow = setTimeout(function () { show('Загружаю библиотеку Supabase…'); }, 2500);
-    viaScript(order(), 0);
-  }
-  run();
+  setTimeout(function () { if (!started) show('Загружаю библиотеку Supabase…'); }, 2500);
+  launch();
 })();
+</script>
+<!-- запасной путь: те же адреса, но как модули (esm.sh, esm.run, skypack).
+     Вынесено в отдельный тег, чтобы старые браузеры не сломали основную загрузку. -->
+<script type="module">
+const B = window.KRUG_BOOT;
+const VER = '2.45.4';
+const LIST = [
+  'https://esm.sh/@supabase/supabase-js@' + VER,
+  'https://esm.run/@supabase/supabase-js@' + VER,
+  'https://cdn.skypack.dev/@supabase/supabase-js@' + VER
+];
+const WAIT = 25000;
+let i = 0;
+
+function next() {
+  if (i >= LIST.length) { B.failed(); return; }
+  const url = LIST[i++];
+  let over = false;
+  const t = setTimeout(() => { if (!over) { over = true; B.note(url, 'нет ответа'); next(); } }, WAIT);
+  import(url).then(m => {
+    if (over) return;
+    over = true; clearTimeout(t);
+    const api = (m && typeof m.createClient === 'function') ? m
+              : (m && m.default && typeof m.default.createClient === 'function') ? m.default : null;
+    if (api) { window.supabase = api; B.start(url); }
+    else { B.note(url, 'в ответе нет библиотеки'); next(); }
+  }).catch(() => {
+    if (over) return;
+    over = true; clearTimeout(t);
+    B.note(url, 'не поддерживается браузером или заблокирован');
+    next();
+  });
+}
+next();
 </script>
 </body>
 </html>
