@@ -43,7 +43,7 @@ var sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
 });
 
-var ME = null, STAGED = [], FEED = [], SIGNED = {}, SPACES = [], CONVS = [];
+var ME = null, STAGED = [], FEED = [], SIGNED = {}, AVATAR_URLS = {}, SPACES = [], CONVS = [];
 var CURRENT_SPACE = null, CURRENT_CONV = null, OPEN = new Set(), poll = null;
 
 var isStaff = function () { return !!(ME && (ME.is_owner || ME.is_coowner)); };
@@ -308,7 +308,7 @@ async function signPaths(items) {
 /* ================= ПОСТЫ ================= */
 var POST_SELECT =
   'id,content,created_at,comments_enabled,author_id,space_id,' +
-  'author:profiles!posts_author_id_fkey(display_name,username,is_verified),' +
+  'author:profiles!posts_author_id_fkey(display_name,username,is_verified,avatar_url),' +
   'post_attachments(id,path,name,size,mime),' +
   'post_likes(user_id),' +
   'comments(id,content,created_at,author_id,author:profiles!comments_author_id_fkey(display_name))';
@@ -323,7 +323,7 @@ function postHtml(p) {
   var comments = p.comments || [];
 
   var html = '<article class="card post"><div class="post-head">' +
-    '<div class="av">' + ini(a.display_name) + '</div><div class="who grow"><strong>' + esc(a.display_name || 'Без имени') + '</strong>' +
+    '<button class="profile-open post-author" data-profile="' + esc(a.username || '') + '">' + avatarMarkup(a, '') + '<span><strong>' + esc(a.display_name || 'Без имени') + '</strong></span></button><div class="who grow">' +
     (a.is_verified ? '<span class="badge">✓</span>' : '') +
     '<div>@' + esc(a.username || '—') + ' · ' + dateF(p.created_at) + '</div>' +
     (p._spaceName ? '<div class="post-channel">Канал: ' + esc(p._spaceName) + '</div>' : '') + '</div>' +
@@ -401,6 +401,7 @@ async function loadFeed() {
     FEED = postsResult.data || [];
     FEED.forEach(function (p) { p._spaceName = names[p.space_id] || 'Канал'; });
     await signPaths(FEED);
+    await signAvatarPaths(FEED.map(function (p) { return p.author || {}; }));
 
     box.innerHTML = FEED.length ? FEED.map(postHtml).join('')
       : '<div class="card empty"><h3>Новых публикаций пока нет</h3><p>Вы подписаны на ' + channels.length + ' канал(а). Когда там появятся посты, они отобразятся здесь.</p><button class="btn ghost" id="feedOpenChannels">Мои каналы</button></div>';
@@ -417,6 +418,7 @@ async function loadSpacePosts() {
   if (r.error) { box.innerHTML = '<div class="card sub">' + esc(r.error.message) + '</div>'; return; }
   var rows = r.data || [];
   await signPaths(rows);
+  await signAvatarPaths(rows.map(function (p) { return p.author || {}; }));
   box.innerHTML = rows.length ? rows.map(postHtml).join('') : '<div class="card sub">Публикаций пока нет.</div>';
 }
 
@@ -570,13 +572,13 @@ async function loadMembers(spaceId, admin) {
   var box = $('#memberList');
   if (!box) return;
   var r = await sb.from('space_members')
-    .select('user_id,role,banned_forever,profiles(display_name,username,is_verified)')
+    .select('user_id,role,banned_forever,profiles(display_name,username,is_verified,avatar_url)')
     .eq('space_id', spaceId).limit(200);
   if (r.error) { box.textContent = r.error.message; return; }
+  await signAvatarPaths((r.data || []).map(function (m) { return m.profiles || {}; }));
   box.innerHTML = (r.data || []).map(function (m) {
     var p = m.profiles || {};
-    return '<div class="member-row"><div class="av sm">' + ini(p.display_name) + '</div>' +
-      '<div class="grow">' + esc(p.display_name || '—') + ' <span class="sub">@' + esc(p.username || '—') + '</span></div>' +
+    return '<div class="member-row"><button class="profile-open" data-profile="' + esc(p.username || '') + '">' + avatarMarkup(p, 'sm') + '<span>' + esc(p.display_name || '—') + ' <span class="sub">@' + esc(p.username || '—') + '</span></span></button>' +
       '<span class="badge gray">' + ({ owner: 'владелец', admin: 'админ', member: 'участник' }[m.role] || m.role) + '</span>' +
       (m.banned_forever ? '<span class="badge gray">заблокирован</span>' : '') +
       (admin && m.role !== 'owner' ? '<button class="act" data-member-admin="' + spaceId + ':' + m.user_id + '">Сделать админом</button>' +
@@ -651,7 +653,7 @@ async function loadConversations() {
     if (ids.length) {
       var cs = await sb.from('conversations').select('id,is_support,owner_user').in('id', ids);
       var all = await sb.from('conversation_members')
-        .select('conversation_id,user_id,profiles(display_name,username)').in('conversation_id', ids);
+        .select('conversation_id,user_id,profiles(display_name,username,avatar_url)').in('conversation_id', ids);
       (cs.data || []).forEach(function (c) {
         var others = (all.data || []).filter(function (m) { return m.conversation_id === c.id && m.user_id !== ME.id; });
         var o = others[0] || {};
@@ -659,7 +661,7 @@ async function loadConversations() {
           id: c.id, is_support: c.is_support, owner_user: c.owner_user,
           title: c.is_support ? 'Чат поддержки' : ((o.profiles || {}).display_name || 'Диалог'),
           sub: c.is_support ? 'Обращение к владельцу и совладельцам' : '@' + ((o.profiles || {}).username || '—'),
-          target: o.user_id || null
+          target: o.user_id || null, _profile: o.profiles || {}
         });
       });
     }
@@ -678,6 +680,7 @@ async function loadConversations() {
         });
       });
     }
+    await signAvatarPaths((all.data || []).map(function (m) { return m.profiles || {}; }));
     renderConvList();
   } catch (e) { fail(e.message || e); }
 }
@@ -685,9 +688,10 @@ async function loadConversations() {
 function renderConvList() {
   $('#convList').innerHTML = CONVS.length ? CONVS.map(function (c) {
     return '<div class="conv' + (CURRENT_CONV && CURRENT_CONV.id === c.id ? ' on' : '') + '" data-conv="' + c.id + '">' +
-      '<div class="av sm">' + (c.is_support ? '?' : ini(c.title)) + '</div>' +
-      '<div class="grow"><div style="font-size:13px;font-weight:650">' + esc(c.title) + '</div>' +
-      '<div class="sub">' + esc(c.sub) + '</div></div></div>';
+      '<button class="profile-open" data-profile="' + esc((c._profile || {}).username || '') + '">' +
+      (c.is_support ? '<span class="av sm">?</span>' : avatarMarkup(c._profile || {}, 'sm')) +
+      '<span class="grow"><span style="font-size:13px;font-weight:650;display:block">' + esc(c.title) + '</span>' +
+      '<span class="sub">' + esc(c.sub) + '</span></span></button></div>';
   }).join('') : '<div class="sub">Диалогов пока нет.</div>';
 }
 
@@ -780,9 +784,70 @@ $('#openSupport').onclick = async function () {
   } catch (e) { fail(e.message || e); }
 };
 
+
+/* ================= АВАТАРЫ И ПРОФИЛИ ================= */
+async function signAvatarPaths(profiles) {
+  var paths = [];
+  (profiles || []).forEach(function (p) {
+    if (p && p.avatar_url && !/^https?:\\/\\//i.test(p.avatar_url) && !AVATAR_URLS[p.avatar_url]) paths.push(p.avatar_url);
+  });
+  paths = Array.from(new Set(paths));
+  if (!paths.length) return;
+  var r = await sb.storage.from('attachments').createSignedUrls(paths, 3600);
+  (r.data || []).forEach(function (x) { if (x && x.signedUrl) AVATAR_URLS[x.path] = x.signedUrl; });
+}
+function avatarMarkup(p, extra) {
+  p = p || {};
+  var src = p.avatar_url ? (/^https?:\\/\\//i.test(p.avatar_url) ? p.avatar_url : AVATAR_URLS[p.avatar_url]) : '';
+  return src ? '<img class="av ' + (extra || '') + '" src="' + esc(src) + '" alt="" loading="lazy">' :
+    '<span class="av ' + (extra || '') + '">' + ini(p.display_name) + '</span>';
+}
+async function openUserProfile(username) {
+  if (!username) return;
+  var r = await sb.from('profiles').select('id,display_name,username,bio,avatar_url,is_verified,is_owner,is_coowner,dm_policy').eq('username', username).maybeSingle();
+  if (r.error || !r.data) return toast('Профиль не найден или недоступен');
+  var p = r.data;
+  await signAvatarPaths([p]);
+  $('#profileModalContent').innerHTML =
+    '<div class="profile-cover">' + avatarMarkup(p, 'profile-avatar') + '</div>' +
+    '<h2>' + esc(p.display_name || 'Без имени') + (p.is_verified ? ' <span class="badge">✓</span>' : '') + '</h2>' +
+    '<div class="sub">@' + esc(p.username) + (p.is_owner ? ' · владелец' : p.is_coowner ? ' · совладелец' : '') + '</div>' +
+    '<p class="profile-bio">' + (p.bio ? esc(p.bio) : '<span class="sub">Пользователь пока ничего не рассказал о себе.</span>') + '</p>' +
+    (p.id !== ME.id ? '<div class="row gap wrap"><button class="btn primary" id="profileMessage" data-user-name="' + esc(p.username) + '">Написать сообщение</button></div>' : '<div class="sub">Это ваш профиль</div>');
+  $('#profileModal').hidden = false;
+}
+document.addEventListener('click', function (e) {
+  var trigger = e.target.closest('[data-profile]');
+  if (trigger) { e.preventDefault(); openUserProfile(trigger.dataset.profile).catch(function (x) { fail(x.message || x); }); return; }
+  if (e.target.closest('#closeProfileModal') || e.target.id === 'profileModal') { $('#profileModal').hidden = true; return; }
+  var dm = e.target.closest('#profileMessage');
+  if (dm) {
+    $('#profileModal').hidden = true;
+    $('#newDmUser').value = '@' + dm.dataset.userName;
+    $('#startDm').click();
+  }
+});
+$('#avatarInput').onchange = async function () {
+  var file = this.files && this.files[0]; this.value = '';
+  if (!file) return;
+  if (!/^image\\/(png|jpe?g|webp|gif)$/i.test(file.type || '')) return toast('Выберите изображение PNG, JPG, WebP или GIF');
+  if (file.size > 5 * 1024 * 1024) return toast('Аватар должен быть не больше 5 МБ');
+  try {
+    var ext = (file.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+    var path = ME.id + '/avatars/' + Date.now() + '.' + ext;
+    var up = await sb.storage.from('attachments').upload(path, file, { contentType: file.type, upsert: false });
+    if (up.error) return fail('Не удалось загрузить аватар: ' + up.error.message);
+    var save = await sb.from('profiles').update({ avatar_url: path }).eq('id', ME.id).select().maybeSingle();
+    if (save.error) return fail('Файл загружен, но профиль не обновился: ' + save.error.message);
+    ME = save.data; delete AVATAR_URLS[path];
+    await signAvatarPaths([ME]); renderMe(); toast('Аватар обновлён');
+  } catch (e) { fail(e.message || e); }
+};
+
 /* ================= ПРОФИЛЬ ================= */
 function renderMe() {
   $('#meName').textContent = ME.display_name || 'Без имени';
+  $('#meAvatar').innerHTML = avatarMarkup(ME, 'large');
   $('#meMeta').textContent = '@' + (ME.username || '—') +
     (ME.is_owner ? ' · владелец соцсети' : ME.is_coowner ? ' · совладелец' : '') +
     (ME.is_verified ? ' · верифицирован' : '');
