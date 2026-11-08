@@ -819,7 +819,7 @@ async function openUserProfile(username) {
 }
 document.addEventListener('click', function (e) {
   var trigger = e.target.closest('[data-profile]');
-  if (trigger) { e.preventDefault(); e.stopPropagation(); openUserProfile(trigger.dataset.profile).catch(function (x) { fail(x.message || x); }); return; }
+  if (trigger && trigger.dataset.profile) { e.preventDefault(); e.stopPropagation(); openUserProfile(trigger.dataset.profile).catch(function (x) { fail(x.message || x); }); return; }
   if (e.target.closest('#closeProfileModal') || e.target.id === 'profileModal') { $('#profileModal').hidden = true; return; }
   var dm = e.target.closest('#profileMessage');
   if (dm) {
