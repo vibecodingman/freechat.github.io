@@ -107,9 +107,10 @@
     </div>
 
     <div class="pane" id="pane-me">
-      <div class="card"><h2 id="meName">—</h2><p class="muted" id="meMeta"></p><div id="meStatus"></div></div>
+      <div class="card profile-self"><div id="meAvatar"></div><div><h2 id="meName">—</h2><p class="muted" id="meMeta"></p><div id="meStatus"></div></div></div>
       <div class="card">
         <h3>Настройки</h3>
+        <label class="field"><span>Аватар профиля</span><input id="avatarInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif"><small class="sub">PNG, JPG, WebP или GIF, до 5 МБ</small></label>
         <label class="field"><span>Имя</span><input id="setName"></label>
         <label class="field"><span>Имя пользователя</span><input id="setUser"></label>
         <label class="field"><span>О себе</span><input id="setBio"></label>
@@ -184,6 +185,13 @@
       <button class="btn ghost" id="closeSpaceModal">Отмена</button>
       <button class="btn primary" id="createSpace">Создать</button>
     </div>
+  </div>
+</div>
+
+<div class="modal" id="profileModal" hidden>
+  <div class="modal-box profile-modal-box">
+    <button class="btn ghost profile-close" id="closeProfileModal" type="button">Закрыть</button>
+    <div id="profileModalContent"></div>
   </div>
 </div>
 
