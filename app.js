@@ -980,7 +980,7 @@ document.addEventListener('click', async function (e) {
   }
 });
 
-$('[data-tab]').forEach(function (b) { b.onclick = function () { showTab(b.dataset.tab); }; });
+$$('[data-tab]').forEach(function (b) { b.onclick = function () { showTab(b.dataset.tab); }; });
 if ($('#feedFindChannels')) $('#feedFindChannels').onclick = function () { showTab('spaces'); };
 
 /* ================= ПРОВЕРКА ПОДКЛЮЧЕНИЯ ================= */
