@@ -44,6 +44,14 @@ var sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, {
 });
 
 var ME = null, STAGED = [], FEED = [], SIGNED = {}, AVATAR_URLS = {}, SPACES = [], CONVS = [];
+
+function makeUuid() {
+  if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+    var r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 3 | 8)).toString(16);
+  });
+}
 var CURRENT_SPACE = null, CURRENT_CONV = null, OPEN = new Set(), poll = null;
 var NOTIF_PREFS = { dm_enabled: true, dm_delivery: 'in_app', space_badges: true, comment_badges: true };
 var SPACE_UNREAD = {}, CONV_UNREAD = {}, LAST_DM_CHECK = null, notifPoll = null;
@@ -895,15 +903,19 @@ $('#startDm').onclick = async function () {
       if (exist.data) { await loadConversations(); return openConv(exist.data.conversation_id); }
     }
 
-    var c = await sb.from('conversations').insert({ is_support: false }).select().maybeSingle();
-    if (c.error) return fail(c.error.message);
-    await sb.from('conversation_members').insert([
-      { conversation_id: c.data.id, user_id: ME.id },
-      { conversation_id: c.data.id, user_id: p.data.id }
+    // Не запрашиваем SELECT/RETURNING: до добавления участников чат ещё
+    // не проходит conv_select, поэтому .select() здесь вызывает отказ RLS.
+    var cid = makeUuid();
+    var c = await sb.from('conversations').insert({ id: cid, is_support: false });
+    if (c.error) return fail('Не удалось создать чат: ' + c.error.message);
+    var added = await sb.from('conversation_members').insert([
+      { conversation_id: cid, user_id: ME.id },
+      { conversation_id: cid, user_id: p.data.id }
     ]);
+    if (added.error) return fail('Чат создан, но не удалось добавить участников: ' + added.error.message);
     $('#newDmUser').value = '';
     await loadConversations();
-    openConv(c.data.id);
+    openConv(cid);
   } catch (e) { fail(e.message || e); }
 };
 
@@ -912,10 +924,12 @@ $('#openSupport').onclick = async function () {
     var r = await sb.from('conversations').select('id').eq('is_support', true).eq('owner_user', ME.id).maybeSingle();
     var cid = r.data && r.data.id;
     if (!cid) {
-      var c = await sb.from('conversations').insert({ is_support: true, owner_user: ME.id }).select().maybeSingle();
-      if (c.error) return fail(c.error.message);
-      cid = c.data.id;
-      await sb.from('conversation_members').insert({ conversation_id: cid, user_id: ME.id });
+      // Создаём без .select(): пользователь ещё не участник нового чата.
+      cid = makeUuid();
+      var c = await sb.from('conversations').insert({ id: cid, is_support: true, owner_user: ME.id });
+      if (c.error) return fail('Не удалось создать чат поддержки: ' + c.error.message);
+      var added = await sb.from('conversation_members').insert({ conversation_id: cid, user_id: ME.id });
+      if (added.error) return fail('Чат поддержки создан, но не удалось добавить участника: ' + added.error.message);
     }
     showTab('chats');
     await loadConversations();
