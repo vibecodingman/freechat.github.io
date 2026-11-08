@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Круг</title>
 <link rel="stylesheet" href="styles.css">
+<script src="vendor/supabase.js"></script>
 </head>
 <body>
 
@@ -21,7 +22,18 @@
       Войти через GitHub
     </button>
 
-    <p class="fine" id="authHint">Аккаунт создаётся при первом входе, пароль не нужен. GitHub открывается без VPN.</p>
+    <button class="btn provider" id="signInGoogle">
+      <svg viewBox="0 0 48 48" width="19" height="19" aria-hidden="true"><path fill="#4285F4" d="M45 24c0-1.6-.1-2.7-.4-4H24v7.5h12c-.2 2-1.5 5-4.4 7l6.7 5.2C42.2 36.2 45 30.7 45 24z"/><path fill="#34A853" d="M24 46c6.9 0 12.7-2.3 17-6.2l-6.7-5.2C31.9 36 28.2 37 24 37c-6.6 0-12.2-4.4-14.2-10.4l-7 5.4C7.2 40.7 15 46 24 46z"/><path fill="#FBBC05" d="M9.8 26.6c-.5-1.5-.8-3-.8-4.6s.3-3.1.8-4.6l-7-5.4C1 15.1 0 19.4 0 22s1 6.9 2.8 10z"/><path fill="#EA4335" d="M24 9c3.7 0 7 1.3 9.6 3.8l6-6C35.9 3 30.6 1 24 1 15 1 7.2 6.3 2.8 13l7 5.4C11.8 13.4 17.4 9 24 9z"/></svg>
+      Войти через Google
+    </button>
+
+    <div class="or"><span>или по почте</span></div>
+
+    <label class="field"><span>Электронная почта</span>
+      <input id="emailInput" type="email" autocomplete="email" placeholder="pochta@example.com"></label>
+    <button class="btn provider" id="signInEmail">Прислать ссылку для входа</button>
+
+    <p class="fine" id="authHint">Регистрация свободная, пароль не нужен. GitHub в России открывается без VPN.</p>
   </div>
 </section>
 
@@ -178,65 +190,7 @@
 </div>
 
 <div id="toast" class="toast"></div>
-<script src="supabase-lite.js"></script>
-<!-- ==== ЗАГРУЗКА БИБЛИОТЕКИ SUPABASE ====
-     Эта часть не относится к оформлению сайта — она просто добывает библиотеку Supabase,
-     с помощью которой сайт разговаривает с базой данных.
-     Библиотека берётся ТОЛЬКО с твоего сайта (vendor/supabase.js).
-     Адреса внешних CDN убраны, чтобы сайт работал даже если они заблокированы.
-     Трогать этот блок не нужно. -->
-<script>
-(function () {
-  'use strict';
-
-  var APP = 'app-core.js?v=4'; /* файл с кодом самого сайта */
-
-  /* Библиотека Supabase берётся ТОЛЬКО с твоего сайта.
-     Если файла vendor/supabase.js нет — сайт не запустится. */
-  var SOURCE = 'vendor/supabase.js';
-
-  var WAIT = 6000;
-  var started = false, timer = null;
-
-  function box() { return document.getElementById('diag'); }
-  function say(html) { var d = box(); if (!d) return; d.hidden = false; d.onclick = null; d.innerHTML = html; }
-  function quiet() { var d = box(); if (d && /Supabase|Загружаю/i.test(d.textContent || '')) { d.textContent = ''; d.hidden = true; } }
-  function ready() { return !!(window.supabase && typeof window.supabase.createClient === 'function'); }
-
-  function start() {
-    if (started) return;
-    started = true;
-    clearTimeout(timer);
-    quiet();
-    var s = document.createElement('script');
-    s.src = APP;
-    s.onerror = function () { say('<b>Файл app-core.js не найден.</b> Он должен лежать рядом с index.html.'); };
-    (document.body || document.head).appendChild(s);
-  }
-
-  function nothingWorked() {
-    clearTimeout(timer);
-    say('<b>Библиотека Supabase не загрузилась.</b><br>' +
-        'Нужен файл <b>vendor/supabase.js</b>. Положи его в репозиторий сайта в папку <b>vendor</b>.<br>' +
-        'Тогда библиотека будет грузиться с твоего же сайта, и внешние адреса вообще не понадобятся.<br><br>' +
-        '<button class="btn ghost" id="krugRetry">Повторить попытку</button>');
-    var b = document.getElementById('krugRetry');
-    if (b) b.onclick = function () { quiet(); launch(); };
-  }
-
-  function launch() {
-    if (ready()) { start(); return; }
-    var s = document.createElement('script');
-    s.src = SOURCE;
-    s.onload = function () { if (ready()) start(); else nothingWorked(); };
-    s.onerror = function () { nothingWorked(); };
-    document.head.appendChild(s);
-    timer = setTimeout(function () { if (!started) say('Загрузка затянулась — проверьте соединение или файл vendor/supabase.js.'); }, WAIT);
-  }
-
-  setTimeout(function () { if (!started) say('Загружаю библиотеку Supabase…'); }, 2500);
-  launch();
-})();
-</script>
+<script src="config.js"></script>
+<script src="app.js"></script>
 </body>
 </html>
