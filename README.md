@@ -1,4 +1,4 @@
-# Круг — версия 1.3 (вход через GitHub)
+# Inomesto — версия 1.3 (вход через GitHub)
 
 Соцсеть на GitHub Pages + Supabase. Файлы статические, все данные — в Supabase.
 
@@ -52,7 +52,7 @@
 
 Ссылка, которую вы прислали, содержит рабочие токены: `access_token` (доступ к вашему аккаунту) и `provider_token` (доступ к вашему GitHub). Сделайте две вещи:
 
-1. **GitHub** → **Settings** → **Applications** → **Authorized OAuth Apps** → у приложения «Круг» нажмите **Revoke access**. Затем войдите заново.
+1. **GitHub** → **Settings** → **Applications** → **Authorized OAuth Apps** → у приложения «Inomesto» нажмите **Revoke access**. Затем войдите заново.
 2. **Supabase** → **Authentication** → **Sessions** (или **Users** → ваш пользователь) → **Sign out all sessions**.
 
 Токены живут час, но GitHub-токен лучше отозвать сразу. И больше не вставляйте такие ссылки в чат — в них вход в аккаунт целиком.
@@ -63,7 +63,7 @@
 2. Прокрутите в самый низ → **Developer settings** (левое меню).
 3. **OAuth Apps** → **New OAuth App**.
 4. Заполните:
-   - **Application name** — `Круг`
+   - **Application name** — `Inomesto`
    - **Homepage URL** — адрес вашего сайта, например `https://freechat.github.io`
    - **Authorization callback URL** — ровно эта строка, без изменений:
      ```
