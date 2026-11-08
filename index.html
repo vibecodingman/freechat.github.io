@@ -179,59 +179,63 @@
 
 <div id="toast" class="toast"></div>
 <script src="config.js"></script>
-<!-- Добываем библиотеку Supabase: адреса по очереди, короткие ожидания,
-     общий предел по времени — чтобы страница никогда не висела. -->
+<!-- ==== ЗАГРУЗКА БИБЛИОТЕКИ SUPABASE ====
+     Эта часть не относится к оформлению сайта — она просто добывает библиотеку Supabase,
+     с помощью которой сайт разговаривает с базой данных.
+     Библиотека берётся ТОЛЬКО с твоего сайта (vendor/supabase.js).
+     Адреса внешних CDN убраны, чтобы сайт работал даже если они заблокированы.
+     Трогать этот блок не нужно. -->
 <script>
 (function () {
-  var VER = '2.45.4';
-  var LIST = [
-    'vendor/supabase.js',
-    'https://gcore.jsdelivr.net/npm/@supabase/supabase-js@' + VER + '/dist/umd/supabase.js',
-    'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@' + VER + '/dist/umd/supabase.js',
-    'https://unpkg.com/@supabase/supabase-js@' + VER + '/dist/umd/supabase.js'
-  ];
-  var WAIT = 5000;       /* ждём один адрес не дольше 5 секунд */
-  var DEADLINE = 18000;  /* общий предел: дальше показываем сообщение, а не висим */
-  var i = 0, done = false;
+  'use strict';
 
-  function ready() { return !!(window.supabase && typeof window.supabase.createClient === 'function'); }
+  var APP = 'app-core.js?v=4'; /* файл с кодом самого сайта */
+
+  /* Библиотека Supabase берётся ТОЛЬКО с твоего сайта.
+     Если файла vendor/supabase.js нет — сайт не запустится. */
+  var SOURCE = 'vendor/supabase.js';
+
+  var WAIT = 6000;
+  var started = false, timer = null;
+
   function box() { return document.getElementById('diag'); }
-  function say(t) { var d = box(); if (d) { d.hidden = false; d.textContent = t; } }
-  function quiet() { var d = box(); if (d) { d.hidden = true; d.textContent = ''; } }
+  function say(html) { var d = box(); if (!d) return; d.hidden = false; d.onclick = null; d.innerHTML = html; }
+  function quiet() { var d = box(); if (d && /Supabase|Загружаю/i.test(d.textContent || '')) { d.textContent = ''; d.hidden = true; } }
+  function ready() { return !!(window.supabase && typeof window.supabase.createClient === 'function'); }
 
   function start() {
-    if (done) return;
-    done = true;
+    if (started) return;
+    started = true;
+    clearTimeout(timer);
     quiet();
     var s = document.createElement('script');
-    s.src = 'app-core.js?v=4';
-    s.onerror = function () { say('Не найден файл app-core.js — он должен лежать рядом с index.html.'); };
-    document.body.appendChild(s);
+    s.src = APP;
+    s.onerror = function () { say('<b>Файл app-core.js не найден.</b> Он должен лежать рядом с index.html.'); };
+    (document.body || document.head).appendChild(s);
   }
 
-  function next() {
-    if (done) return;
-    if (i >= LIST.length) {
-      say('Библиотека Supabase не загрузилась. Скачай файл gcore.jsdelivr.net/npm/@supabase/supabase-js@' + VER + '/dist/umd/supabase.js и загрузи его в репозиторий как vendor/supabase.js — тогда внешние адреса вообще не понадобятся.');
-      return;
-    }
-    var url = LIST[i++], over = false;
+  function nothingWorked() {
+    clearTimeout(timer);
+    say('<b>Библиотека Supabase не загрузилась.</b><br>' +
+        'Нужен файл <b>vendor/supabase.js</b>. Положи его в репозиторий сайта в папку <b>vendor</b>.<br>' +
+        'Тогда библиотека будет грузиться с твоего же сайта, и внешние адреса вообще не понадобятся.<br><br>' +
+        '<button class="btn ghost" id="krugRetry">Повторить попытку</button>');
+    var b = document.getElementById('krugRetry');
+    if (b) b.onclick = function () { quiet(); launch(); };
+  }
+
+  function launch() {
+    if (ready()) { start(); return; }
     var s = document.createElement('script');
-    s.src = url;
-    s.async = true;
-    var t = setTimeout(function () { if (over) return; over = true; next(); }, WAIT);
-    s.onload = function () {
-      if (over) return;
-      over = true; clearTimeout(t);
-      if (ready()) { start(); } else { next(); }
-    };
-    s.onerror = function () { if (over) return; over = true; clearTimeout(t); next(); };
+    s.src = SOURCE;
+    s.onload = function () { if (ready()) start(); else nothingWorked(); };
+    s.onerror = function () { nothingWorked(); };
     document.head.appendChild(s);
+    timer = setTimeout(function () { if (!started) say('Загрузка затянулась — проверьте соединение или файл vendor/supabase.js.'); }, WAIT);
   }
 
-  setTimeout(function () { if (!done) say('Загрузка затянулась — обнови страницу сочетанием Ctrl+F5.'); }, DEADLINE);
-
-  if (ready()) { start(); } else { next(); }
+  setTimeout(function () { if (!started) say('Загружаю библиотеку Supabase…'); }, 2500);
+  launch();
 })();
 </script>
 </body>
