@@ -53,8 +53,8 @@
     <div class="brand"><span class="mark small">К</span><span>Круг</span></div>
     <nav class="tabs" id="tabs">
       <button class="tab active" data-tab="feed">Лента</button>
-      <button class="tab" data-tab="spaces">Пространства</button>
-      <button class="tab" data-tab="chats">Сообщения</button>
+      <button class="tab" data-tab="spaces">Каналы и группы</button>
+      <button class="tab" data-tab="chats">Чаты</button>
       <button class="tab" data-tab="me">Профиль</button>
       <button class="tab staff-only" data-tab="mod" hidden>Модерация</button>
     </nav>
@@ -65,35 +65,33 @@
 
   <main class="wrap">
     <div class="pane active" id="pane-feed">
-      <div class="card composer">
-        <textarea id="postText" placeholder="О чём хотите рассказать?"></textarea>
-        <div class="staged" id="staged"></div>
-        <div class="row between wrap gap">
-          <div class="row gap wrap">
-            <label class="chip"><input type="file" id="pickPhoto" accept="image/*" multiple hidden>Фото</label>
-            <label class="chip"><input type="file" id="pickFile" multiple hidden>Файл</label>
-            <label class="check"><input type="checkbox" id="allowComments" checked> Комментарии</label>
-          </div>
-          <button class="btn primary" id="publish">Опубликовать</button>
-        </div>
+      <div class="page-heading">
+        <div><h1>Ваша лента</h1><p>Публикации только из каналов, на которые вы подписаны</p></div>
+        <button class="btn primary" id="feedFindChannels">Найти каналы</button>
       </div>
       <div id="feed"></div>
     </div>
 
     <div class="pane" id="pane-spaces">
+      <div class="page-heading">
+        <div><h1>Каналы и сообщества</h1><p>Подписывайтесь на каналы или вступайте в сообщества</p></div>
+        <button class="btn primary" id="openSpaceModal">Создать</button>
+      </div>
       <div class="row between mb wrap gap">
-        <button class="btn ghost" id="showAllSpaces">Все пространства</button>
-        <button class="btn primary" id="openSpaceModal">Создать пространство</button>
+        <button class="btn ghost" id="showAllSpaces">Обновить список</button>
       </div>
       <div id="spaceView"></div>
     </div>
 
     <div class="pane" id="pane-chats">
+      <div class="page-heading">
+        <div><h1>Ваши чаты</h1><p>Личные разговоры и поддержка</p></div>
+      </div>
       <div class="chat-layout card">
         <div class="chat-list">
           <div class="row gap mb">
-            <input id="newDmUser" class="grow" placeholder="Логин пользователя">
-            <button class="btn ghost" id="startDm">Написать</button>
+            <input id="newDmUser" class="grow" placeholder="@логин пользователя">
+            <button class="btn primary" id="startDm">Новый чат</button>
           </div>
           <div id="convList"></div>
         </div>
@@ -159,7 +157,7 @@
 
   <nav class="mobile-tabs" id="mobileTabs">
     <button class="tab active" data-tab="feed">Лента</button>
-    <button class="tab" data-tab="spaces">Простран.</button>
+    <button class="tab" data-tab="spaces">Каналы</button>
     <button class="tab" data-tab="chats">Чаты</button>
     <button class="tab" data-tab="me">Профиль</button>
     <button class="tab staff-only" data-tab="mod" hidden>Модерация</button>
