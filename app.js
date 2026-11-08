@@ -129,7 +129,7 @@ async function pollPersonalMessages() {
       .order('created_at', { ascending: true }).limit(30);
     LAST_DM_CHECK = new Date().toISOString();
     (r.data || []).forEach(function (m) {
-      if (!CURRENT_CONV || CURRENT_CONV.id !== m.conversation_id || document.visibilityState !== 'visible') deliverDmNotification(m);
+      if (!CURRENT_CONV || CURRENT_CONV.id !== m.conversation_id || !$('#pane-chats').classList.contains('active') || document.visibilityState !== 'visible') deliverDmNotification(m);
     });
   } catch (e) { /* polling не должен прерывать работу сайта */ }
 }
@@ -360,7 +360,9 @@ $('#saveOnboarding').onclick = async function () {
     }).eq('id', ME.id).select().maybeSingle();
     if (r.error) return toast(r.error.message.indexOf('duplicate') >= 0 ? 'Этот логин уже занят' : r.error.message);
     ME = r.data;
+    await loadNotificationPrefs();
     showScreen('app');
+    startNotificationPolling();
     if (isStaff()) $$('.staff-only').forEach(function (b) { b.hidden = false; });
     renderIdentity();
     showTab('feed');
