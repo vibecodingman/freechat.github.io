@@ -648,11 +648,12 @@ async function loadConversations() {
   try {
     var mem = await sb.from('conversation_members').select('conversation_id').eq('user_id', ME.id);
     var ids = (mem.data || []).map(function (m) { return m.conversation_id; });
+    var all = { data: [] };
     CONVS = [];
 
     if (ids.length) {
       var cs = await sb.from('conversations').select('id,is_support,owner_user').in('id', ids);
-      var all = await sb.from('conversation_members')
+      all = await sb.from('conversation_members')
         .select('conversation_id,user_id,profiles(display_name,username,avatar_url)').in('conversation_id', ids);
       (cs.data || []).forEach(function (c) {
         var others = (all.data || []).filter(function (m) { return m.conversation_id === c.id && m.user_id !== ME.id; });
