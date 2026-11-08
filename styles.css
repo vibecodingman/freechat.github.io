@@ -133,3 +133,25 @@ textarea{resize:vertical;min-height:64px}
   .space-card .space-row>.btn{align-self:center}
   .space-description{max-width:100%}
 }
+
+/* --- профили и аватары --- */
+.av{object-fit:cover;overflow:hidden}
+.profile-self{display:flex;align-items:center;gap:16px}
+.profile-self h2{margin:0 0 4px}
+.profile-self .av.large{width:76px;height:76px;flex:0 0 76px;font-size:27px}
+.profile-open{display:inline-flex;align-items:center;gap:9px;padding:0;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer;border-radius:10px;min-width:0}
+.profile-open:hover{color:var(--accent)}
+.profile-open .av{flex:0 0 38px}
+.member-row .profile-open{flex:1}
+.post-author{flex:0 0 auto;max-width:190px}
+.post-author span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.profile-modal-box{text-align:center;position:relative}
+.profile-close{display:block;margin-left:auto}
+.profile-cover{display:flex;justify-content:center;margin:8px 0 14px}
+.profile-avatar{width:112px;height:112px;flex:0 0 112px;font-size:40px}
+.profile-bio{white-space:pre-wrap;line-height:1.55;margin:18px 0;text-align:left}
+.profile-modal-box .row{justify-content:center}
+@media(max-width:760px){
+  .profile-self{align-items:flex-start}
+  .post-author{max-width:150px}
+}
