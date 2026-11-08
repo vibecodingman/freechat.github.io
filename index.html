@@ -98,7 +98,10 @@
         <div class="chat-window">
           <div class="chat-head" id="chatHead">Выберите чат</div>
           <div class="messages" id="messages"><div class="empty">Слева выберите диалог</div></div>
+          <div id="chatStaged" class="chat-staged" hidden></div>
           <div class="chat-input">
+            <input id="chatFileInput" type="file" multiple accept="image/*,audio/*,video/*,.pdf,.txt,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip" hidden>
+            <button class="btn ghost chat-attach" id="attachChatFile" type="button" title="Прикрепить файл">📎</button>
             <input id="msgInput" placeholder="Сообщение…">
             <button class="btn primary" id="sendMsg">Отправить</button>
           </div>
@@ -216,6 +219,6 @@
 
 <div id="toast" class="toast"></div>
 <script src="config.js"></script>
-<script src="app.js?v=20261108-notifications1"></script>
+<script src="app.js?v=20261108-chatfiles1"></script>
 </body>
 </html>

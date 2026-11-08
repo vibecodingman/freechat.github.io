@@ -44,6 +44,7 @@ var sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, {
 });
 
 var ME = null, STAGED = [], FEED = [], SIGNED = {}, AVATAR_URLS = {}, SPACES = [], CONVS = [];
+var CHAT_STAGED = [], CHAT_SENDING = false;
 
 function makeUuid() {
   if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
@@ -854,31 +855,121 @@ async function openConv(id) {
 async function loadMessages() {
   if (!CURRENT_CONV) return;
   var r = await sb.from('messages')
-    .select('id,body,from_support,sender_id,created_at,profiles(display_name)')
+    .select('id,body,attachments,from_support,sender_id,created_at,profiles(display_name)')
     .eq('conversation_id', CURRENT_CONV.id).order('created_at').limit(300);
   if (r.error) { $('#messages').innerHTML = '<div class="sub">' + esc(r.error.message) + '</div>'; return; }
+  await signMessagePaths(r.data || []);
   var box = $('#messages');
   box.innerHTML = (r.data || []).map(function (m) {
     var mine = m.sender_id === ME.id;
     var label = m.from_support ? 'Чат поддержки' : ((m.profiles || {}).display_name || 'Участник');
-    return '<div class="bubble' + (mine ? ' mine' : '') + '">' + esc(m.body) +
+    var body = esc(m.body || '').replace(/\n/g, '<br>');
+    var files = (m.attachments || []).map(chatAttachmentHtml).join('');
+    return '<div class="bubble' + (mine ? ' mine' : '') + '">' +
+      (body ? '<div class="message-body">' + body + '</div>' : '') + files +
       '<small>' + (mine ? 'Вы' : esc(label)) + ' · ' + dateF(m.created_at) + '</small></div>';
   }).join('') || '<div class="empty">Сообщений пока нет</div>';
   box.scrollTop = box.scrollHeight;
   if (CURRENT_CONV) { await markRead('conversation', CURRENT_CONV.id); CONV_UNREAD[CURRENT_CONV.id] = 0; renderConvList(); }
 }
 
+function renderChatStaged() {
+  var box = $('#chatStaged');
+  if (!box) return;
+  box.hidden = !CHAT_STAGED.length;
+  box.innerHTML = CHAT_STAGED.map(function (f, i) {
+    return '<span class="chat-stage-chip">' + esc(f.name) + ' · ' + sizeF(f.size) +
+      ' <button type="button" data-chat-unstage="' + i + '" aria-label="Убрать файл">×</button></span>';
+  }).join('');
+}
+$('#attachChatFile').onclick = function () {
+  if (!ME) return toast('Сначала войдите в аккаунт');
+  if (!CURRENT_CONV) return toast('Сначала выберите чат');
+  $('#chatFileInput').click();
+};
+$('#chatFileInput').onchange = function () {
+  var files = Array.prototype.slice.call(this.files || []);
+  var maxFile = Math.min(MAX, 50 * 1024 * 1024);
+  files.forEach(function (f) {
+    if (CHAT_STAGED.length >= 10) return toast('Можно прикрепить не более 10 файлов к одному сообщению');
+    if (f.size > maxFile) return toast('Файл больше допустимого лимита (50 МБ): ' + f.name);
+    CHAT_STAGED.push(f);
+  });
+  this.value = '';
+  renderChatStaged();
+};
+document.addEventListener('click', function (e) {
+  var btn = e.target.closest('[data-chat-unstage]');
+  if (btn) { CHAT_STAGED.splice(+btn.dataset.chatUnstage, 1); renderChatStaged(); }
+});
+
+async function uploadChatFiles(files) {
+  var out = [];
+  for (var i = 0; i < files.length; i++) {
+    var f = files[i];
+    var clean = f.name.replace(/[^\w.-]+/g, '_').slice(-60) || 'file';
+    var path = ME.id + '/messages/' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) + '-' + clean;
+    var up = await sb.storage.from('attachments').upload(path, f, {
+      contentType: f.type || 'application/octet-stream', upsert: false
+    });
+    if (up.error) throw new Error('Не удалось загрузить «' + f.name + '»: ' + up.error.message);
+    out.push({ path: path, name: f.name, size: f.size, mime: f.type || 'application/octet-stream' });
+  }
+  return out;
+}
+async function signMessagePaths(messages) {
+  var paths = [];
+  (messages || []).forEach(function (m) {
+    (m.attachments || []).forEach(function (a) {
+      if (a.path && !SIGNED[a.path]) paths.push(a.path);
+    });
+  });
+  paths = Array.from(new Set(paths));
+  if (!paths.length) return;
+  var r = await sb.storage.from('attachments').createSignedUrls(paths, 3600);
+  if (r.error) { console.warn('Не удалось получить ссылки на файлы сообщений:', r.error.message); return; }
+  (r.data || []).forEach(function (x) { if (x && x.signedUrl) SIGNED[x.path] = x.signedUrl; });
+}
+function chatAttachmentHtml(a) {
+  var url = a && a.path ? SIGNED[a.path] : '';
+  var name = esc(a && a.name || 'Вложение');
+  if (!url) return '<div class="chat-file">📎 ' + name + ' <span class="sub">Файл недоступен</span></div>';
+  var src = esc(url), mime = String(a.mime || '');
+  if (mime.indexOf('image/') === 0) {
+    return '<a class="chat-image-link" href="' + src + '" target="_blank" rel="noopener"><img class="chat-image" src="' + src + '" alt="' + name + '" loading="lazy"></a>';
+  }
+  if (mime.indexOf('audio/') === 0) {
+    return '<div class="chat-file"><div>🎵 ' + name + '</div><audio class="chat-audio" controls preload="none" src="' + src + '"></audio></div>';
+  }
+  if (mime.indexOf('video/') === 0) {
+    return '<video class="chat-video" controls preload="metadata" src="' + src + '"></video>';
+  }
+  return '<a class="chat-file" href="' + src + '" target="_blank" rel="noopener" download="' + name + '">📎 ' + name + ' <span class="sub">Открыть / скачать</span></a>';
+}
 async function sendMessage() {
   var input = $('#msgInput');
   var body = input.value.trim();
-  if (!body || !CURRENT_CONV || !ME) return;
-  var r = await sb.from('messages').insert({
-    conversation_id: CURRENT_CONV.id, sender_id: ME.id, body: body,
-    from_support: !!(CURRENT_CONV.staffView && isStaff())
-  });
-  if (r.error) return fail(r.error.message);
-  input.value = '';
-  loadMessages();
+  if ((!body && !CHAT_STAGED.length) || !CURRENT_CONV || !ME || CHAT_SENDING) return;
+  CHAT_SENDING = true;
+  $('#sendMsg').disabled = true;
+  var uploaded = [];
+  try {
+    if (CHAT_STAGED.length) uploaded = await uploadChatFiles(CHAT_STAGED.slice());
+    var r = await sb.from('messages').insert({
+      conversation_id: CURRENT_CONV.id, sender_id: ME.id, body: body,
+      attachments: uploaded,
+      from_support: !!(CURRENT_CONV.staffView && isStaff())
+    });
+    if (r.error) {
+      if (uploaded.length) await sb.storage.from('attachments').remove(uploaded.map(function (x) { return x.path; }));
+      return fail(r.error.message);
+    }
+    input.value = '';
+    CHAT_STAGED = [];
+    renderChatStaged();
+    await loadMessages();
+  } catch (e) { fail(e.message || e); }
+  finally { CHAT_SENDING = false; $('#sendMsg').disabled = false; }
 }
 $('#sendMsg').onclick = sendMessage;
 $('#msgInput').addEventListener('keydown', function (e) { if (e.key === 'Enter') sendMessage(); });
