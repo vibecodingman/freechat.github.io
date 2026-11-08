@@ -311,7 +311,7 @@ var POST_SELECT =
   'author:profiles!posts_author_id_fkey(display_name,username,is_verified,avatar_url),' +
   'post_attachments(id,path,name,size,mime),' +
   'post_likes(user_id),' +
-  'comments(id,content,created_at,author_id,author:profiles!comments_author_id_fkey(display_name))';
+  'comments(id,content,created_at,author_id,author:profiles!comments_author_id_fkey(display_name,username))';
 
 function postHtml(p) {
   var a = p.author || {};
@@ -353,7 +353,7 @@ function postHtml(p) {
       html += '<div class="sub">Автор отключил комментарии.</div>';
     } else {
       comments.forEach(function (c) {
-        html += '<div class="comment"><b>' + esc((c.author || {}).display_name || 'Участник') + '</b>' + esc(c.content) + '</div>';
+        html += '<div class="comment"><button class="profile-open" data-profile="' + esc((c.author || {}).username || '') + '"><b>' + esc((c.author || {}).display_name || 'Участник') + '</b></button> ' + esc(c.content) + '</div>';
       });
       html += '<div class="comment-form"><input data-comment-input="' + p.id + '" placeholder="Комментарий…">' +
         '<button class="btn ghost" data-comment-send="' + p.id + '">Отправить</button></div>';
@@ -401,7 +401,7 @@ async function loadFeed() {
     FEED = postsResult.data || [];
     FEED.forEach(function (p) { p._spaceName = names[p.space_id] || 'Канал'; });
     await signPaths(FEED);
-    await signAvatarPaths(FEED.map(function (p) { return p.author || {}; }));
+    await signAvatarPaths(FEED.reduce(function (a, p) { a.push(p.author || {}); (p.comments || []).forEach(function (c) { a.push(c.author || {}); }); return a; }, []));
 
     box.innerHTML = FEED.length ? FEED.map(postHtml).join('')
       : '<div class="card empty"><h3>Новых публикаций пока нет</h3><p>Вы подписаны на ' + channels.length + ' канал(а). Когда там появятся посты, они отобразятся здесь.</p><button class="btn ghost" id="feedOpenChannels">Мои каналы</button></div>';
@@ -418,7 +418,7 @@ async function loadSpacePosts() {
   if (r.error) { box.innerHTML = '<div class="card sub">' + esc(r.error.message) + '</div>'; return; }
   var rows = r.data || [];
   await signPaths(rows);
-  await signAvatarPaths(rows.map(function (p) { return p.author || {}; }));
+  await signAvatarPaths(rows.reduce(function (a, p) { a.push(p.author || {}); (p.comments || []).forEach(function (c) { a.push(c.author || {}); }); return a; }, []));
   box.innerHTML = rows.length ? rows.map(postHtml).join('') : '<div class="card sub">Публикаций пока нет.</div>';
 }
 
@@ -819,7 +819,7 @@ async function openUserProfile(username) {
 }
 document.addEventListener('click', function (e) {
   var trigger = e.target.closest('[data-profile]');
-  if (trigger) { e.preventDefault(); openUserProfile(trigger.dataset.profile).catch(function (x) { fail(x.message || x); }); return; }
+  if (trigger) { e.preventDefault(); e.stopPropagation(); openUserProfile(trigger.dataset.profile).catch(function (x) { fail(x.message || x); }); return; }
   if (e.target.closest('#closeProfileModal') || e.target.id === 'profileModal') { $('#profileModal').hidden = true; return; }
   var dm = e.target.closest('#profileMessage');
   if (dm) {
@@ -849,6 +849,7 @@ $('#avatarInput').onchange = async function () {
 function renderMe() {
   $('#meName').textContent = ME.display_name || 'Без имени';
   $('#meAvatar').innerHTML = avatarMarkup(ME, 'large');
+  signAvatarPaths([ME]).then(function () { $('#meAvatar').innerHTML = avatarMarkup(ME, 'large'); });
   $('#meMeta').textContent = '@' + (ME.username || '—') +
     (ME.is_owner ? ' · владелец соцсети' : ME.is_coowner ? ' · совладелец' : '') +
     (ME.is_verified ? ' · верифицирован' : '');
