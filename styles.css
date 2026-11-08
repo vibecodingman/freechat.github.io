@@ -155,3 +155,96 @@ textarea{resize:vertical;min-height:64px}
   .profile-self{align-items:flex-start}
   .post-author{max-width:150px}
 }
+
+
+/* --- Полноэкранная вкладка «Ваши чаты» --- */
+@media (min-width: 761px) {
+  main.wrap:has(#pane-chats.active) {
+    width: 100%;
+    max-width: none;
+    min-height: calc(100vh - 60px);
+    margin: 0;
+    padding: 20px 22px 22px;
+  }
+  #pane-chats.active {
+    display: flex;
+    flex-direction: column;
+    min-height: calc(100vh - 102px);
+  }
+  #pane-chats .page-heading {
+    flex: 0 0 auto;
+    margin-bottom: 14px;
+  }
+  #pane-chats .chat-layout {
+    flex: 1 1 auto;
+    min-height: calc(100vh - 190px);
+    height: calc(100vh - 190px);
+    grid-template-columns: minmax(270px, 320px) minmax(0, 1fr);
+    margin-bottom: 0;
+  }
+  #pane-chats .chat-list {
+    min-width: 0;
+    overflow-y: auto;
+  }
+  #pane-chats .chat-window {
+    min-height: 0;
+    height: 100%;
+  }
+  #pane-chats .messages {
+    max-height: none;
+    min-height: 0;
+    overflow-y: auto;
+  }
+}
+
+@media (max-width: 760px) {
+  main.wrap:has(#pane-chats.active) {
+    width: 100%;
+    max-width: none;
+    padding: 12px 0 82px;
+  }
+  #pane-chats.active {
+    display: flex;
+    flex-direction: column;
+    min-height: calc(100dvh - 142px);
+  }
+  #pane-chats .page-heading {
+    padding: 0 14px;
+    margin-bottom: 10px;
+  }
+  #pane-chats .chat-layout {
+    flex: 1 1 auto;
+    min-height: calc(100dvh - 205px);
+    height: calc(100dvh - 205px);
+    border-left: 0;
+    border-right: 0;
+    border-radius: 0;
+    margin-bottom: 0;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  #pane-chats .chat-list {
+    min-width: 0;
+    max-height: 132px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex-wrap: nowrap;
+  }
+  #pane-chats .chat-list .row {
+    flex: 0 0 230px;
+    flex-wrap: nowrap;
+    margin: 0;
+  }
+  #pane-chats .conv {
+    flex: 0 0 160px;
+  }
+  #pane-chats .chat-window {
+    min-height: 0;
+    height: 100%;
+  }
+  #pane-chats .messages {
+    max-height: none;
+    min-height: 0;
+    overflow-y: auto;
+  }
+}
