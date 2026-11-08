@@ -74,7 +74,7 @@ function showTab(name) {
   if (pane) pane.classList.add('active');
   $$('[data-tab]').forEach(function (b) { b.classList.toggle('active', b.dataset.tab === name); });
   window.scrollTo(0, 0);
-  if (name === 'feed') loadFeed();
+  if (name === 'feed') { CURRENT_SPACE = null; loadFeed(); }
   if (name === 'spaces') loadSpaces();
   if (name === 'chats') loadConversations();
   if (name === 'me') renderMe();
@@ -325,7 +325,8 @@ function postHtml(p) {
   var html = '<article class="card post"><div class="post-head">' +
     '<div class="av">' + ini(a.display_name) + '</div><div class="who grow"><strong>' + esc(a.display_name || 'Без имени') + '</strong>' +
     (a.is_verified ? '<span class="badge">✓</span>' : '') +
-    '<div>@' + esc(a.username || '—') + ' · ' + dateF(p.created_at) + '</div></div>' +
+    '<div>@' + esc(a.username || '—') + ' · ' + dateF(p.created_at) + '</div>' +
+    (p._spaceName ? '<div class="post-channel">Канал: ' + esc(p._spaceName) + '</div>' : '') + '</div>' +
     '<button class="act" data-report="' + p.id + '">Жалоба</button></div>';
 
   if (p.content) html += '<div class="post-text">' + esc(p.content) + '</div>';
@@ -363,13 +364,48 @@ function postHtml(p) {
 }
 
 async function loadFeed() {
+  var box = $('#feed');
+  if (!box || !ME) return;
+  box.innerHTML = '<div class="card empty">Загружаем публикации ваших каналов…</div>';
   try {
-    var r = await sb.from('posts').select(POST_SELECT).is('space_id', null).order('created_at', { ascending: false }).limit(40);
-    if (r.error) { fail('Лента не загрузилась: ' + r.error.message); return; }
-    FEED = r.data || [];
+    var membership = await sb.from('space_members').select('space_id').eq('user_id', ME.id);
+    if (membership.error) { fail('Не удалось загрузить подписки: ' + membership.error.message); return; }
+
+    var ids = Array.from(new Set((membership.data || []).map(function (m) { return m.space_id; }).filter(Boolean)));
+    if (!ids.length) {
+      FEED = [];
+      box.innerHTML = '<div class="card empty"><h3>В вашей ленте пока тихо</h3><p>Подпишитесь на интересные каналы — их новые публикации будут появляться здесь.</p><button class="btn primary" id="feedFindChannelsEmpty">Найти каналы</button></div>';
+      var findEmpty = $('#feedFindChannelsEmpty');
+      if (findEmpty) findEmpty.onclick = function () { showTab('spaces'); };
+      return;
+    }
+
+    var spacesResult = await sb.from('spaces').select('id,name,is_archived').in('id', ids).eq('type', 'channel');
+    if (spacesResult.error) { fail('Не удалось проверить каналы: ' + spacesResult.error.message); return; }
+    var channels = (spacesResult.data || []).filter(function (s) { return !s.is_archived; });
+    if (!channels.length) {
+      FEED = [];
+      box.innerHTML = '<div class="card empty"><h3>Вы пока не подписаны на каналы</h3><p>Найдите каналы и подпишитесь, чтобы видеть их публикации в ленте.</p><button class="btn primary" id="feedFindChannelsEmpty">Найти каналы</button></div>';
+      var findNoChannels = $('#feedFindChannelsEmpty');
+      if (findNoChannels) findNoChannels.onclick = function () { showTab('spaces'); };
+      return;
+    }
+
+    var channelIds = channels.map(function (s) { return s.id; });
+    var postsResult = await sb.from('posts').select(POST_SELECT).in('space_id', channelIds)
+      .order('created_at', { ascending: false }).limit(60);
+    if (postsResult.error) { fail('Лента не загрузилась: ' + postsResult.error.message); return; }
+
+    var names = {};
+    channels.forEach(function (s) { names[s.id] = s.name; });
+    FEED = postsResult.data || [];
+    FEED.forEach(function (p) { p._spaceName = names[p.space_id] || 'Канал'; });
     await signPaths(FEED);
-    $('#feed').innerHTML = FEED.length ? FEED.map(postHtml).join('')
-      : '<div class="card empty"><b>Пока пусто</b><br>Напишите первый пост.</div>';
+
+    box.innerHTML = FEED.length ? FEED.map(postHtml).join('')
+      : '<div class="card empty"><h3>Новых публикаций пока нет</h3><p>Вы подписаны на ' + channels.length + ' канал(а). Когда там появятся посты, они отобразятся здесь.</p><button class="btn ghost" id="feedOpenChannels">Мои каналы</button></div>';
+    var openChannels = $('#feedOpenChannels');
+    if (openChannels) openChannels.onclick = function () { showTab('spaces'); };
   } catch (e) { fail(e.message || e); }
 }
 
@@ -414,7 +450,7 @@ async function publishPost(spaceId) {
     if (spaceId) loadSpacePosts(); else loadFeed();
   } catch (e) { fail(e.message || e); }
 }
-$('#publish').onclick = function () { publishPost(null); };
+/* Публикации создаются внутри канала или сообщества. */
 
 /* ================= ПРОСТРАНСТВА ================= */
 async function loadSpaces() {
@@ -447,21 +483,44 @@ async function loadSpaces() {
   } catch (e) { fail(e.message || e); }
 }
 
+function spaceCardHtml(s) {
+  var joined = !!s._myRole;
+  var action = joined
+    ? '<button class="btn primary" data-open-space="' + s.id + '">Открыть</button>'
+    : s._pending
+      ? '<span class="badge gray">Заявка отправлена</span>'
+      : '<button class="btn primary" data-join="' + s.id + '">' +
+        (s.privacy === 'private' ? 'Запросить доступ' : (s.type === 'channel' ? 'Подписаться' : 'Вступить')) +
+        '</button>';
+  return '<div class="card space-card"><div class="space-row"><div class="space-ico">' + ini(s.name) + '</div>' +
+    '<div class="grow"><div><b>' + esc(s.name) + '</b> <span class="badge gray">' + (s.type === 'channel' ? 'Канал' : 'Сообщество') + '</span>' +
+    ' <span class="badge gray">' + (s.privacy === 'private' ? 'Закрытое' : 'Открытое') + '</span>' +
+    (s.is_archived ? ' <span class="badge gray">В архиве</span>' : '') + '</div>' +
+    '<div class="sub">' + nf(s._count) + ' участников · владелец @' + esc((s.owner || {}).username || '—') + '</div>' +
+    (s.description ? '<div class="space-description">' + esc(s.description) + '</div>' : '') + '</div>' +
+    action + '</div></div>';
+}
+
+function spaceSectionHtml(title, hint, items, emptyText) {
+  return '<section class="space-section"><div class="space-section-head"><div><h2>' + title + '</h2><p class="muted">' + hint + '</p></div>' +
+    '<span class="section-count">' + items.length + '</span></div>' +
+    (items.length ? items.map(spaceCardHtml).join('') : '<div class="card empty space-empty">' + emptyText + '</div>') +
+    '</section>';
+}
+
 function renderSpaceList() {
   CURRENT_SPACE = null;
+  var joinedChannels = SPACES.filter(function (s) { return s.type === 'channel' && !!s._myRole; });
+  var otherChannels = SPACES.filter(function (s) { return s.type === 'channel' && !s._myRole; });
+  var communities = SPACES.filter(function (s) { return s.type !== 'channel'; });
   if (!SPACES.length) {
-    $('#spaceView').innerHTML = '<div class="card empty"><b>Пространств пока нет</b><br>Нажмите «Создать пространство».</div>';
+    $('#spaceView').innerHTML = '<div class="card empty"><h3>Здесь пока нет каналов и сообществ</h3><p>Создайте своё пространство или загляните позже.</p></div>';
     return;
   }
-  $('#spaceView').innerHTML = SPACES.map(function (s) {
-    return '<div class="card"><div class="space-row"><div class="space-ico">' + ini(s.name) + '</div>' +
-      '<div class="grow"><div><b>' + esc(s.name) + '</b> <span class="badge gray">' + (s.type === 'channel' ? 'Канал' : 'Сообщество') + '</span>' +
-      ' <span class="badge gray">' + (s.privacy === 'private' ? 'Закрытое' : 'Открытое') + '</span>' +
-      (s.is_archived ? ' <span class="badge gray">В архиве</span>' : '') + '</div>' +
-      '<div class="sub">' + nf(s._count) + ' участников · владелец @' + esc((s.owner || {}).username || '—') + '</div>' +
-      (s.description ? '<div class="sub">' + esc(s.description) + '</div>' : '') + '</div>' +
-      '<button class="btn primary" data-open-space="' + s.id + '">Открыть</button></div></div>';
-  }).join('');
+  $('#spaceView').innerHTML =
+    spaceSectionHtml('Мои подписки', 'Каналы, публикации которых появляются в вашей ленте', joinedChannels, 'Вы пока не подписаны ни на один канал.') +
+    spaceSectionHtml('Найти каналы', 'Подпишитесь, чтобы следить за новыми публикациями', otherChannels, 'Сейчас нет доступных каналов.') +
+    spaceSectionHtml('Сообщества', 'Пространства для общения участников', communities, 'Пока нет сообществ.');
 }
 
 async function openSpace(s) {
@@ -474,7 +533,7 @@ async function openSpace(s) {
     '<div class="row gap wrap">' +
     (!s._myRole ? (s._pending
       ? '<span class="badge gray">Заявка отправлена</span>'
-      : '<button class="btn primary" data-join="' + s.id + '">' + (s.privacy === 'private' ? 'Подать заявку' : 'Вступить') + '</button>') : '') +
+      : '<button class="btn primary" data-join="' + s.id + '">' + (s.privacy === 'private' ? 'Запросить доступ' : (s.type === 'channel' ? 'Подписаться' : 'Вступить')) + '</button>') : '') +
     (adm ? '<button class="btn ghost" data-invite="' + s.id + '">Ссылка-приглашение</button>' : '') +
     (adm ? '<button class="btn ghost" data-del-space="' + s.id + '">Удалить</button>' : '') +
     '</div></div>' +
@@ -922,6 +981,7 @@ document.addEventListener('click', async function (e) {
 });
 
 $$('[data-tab]').forEach(function (b) { b.onclick = function () { showTab(b.dataset.tab); }; });
+if ($('#feedFindChannels')) $('#feedFindChannels').onclick = function () { showTab('spaces'); };
 
 /* ================= ПРОВЕРКА ПОДКЛЮЧЕНИЯ ================= */
 $('#runDiag').onclick = async function () {
