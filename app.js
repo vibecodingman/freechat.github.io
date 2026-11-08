@@ -45,6 +45,8 @@ var sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, {
 
 var ME = null, STAGED = [], FEED = [], SIGNED = {}, AVATAR_URLS = {}, SPACES = [], CONVS = [];
 var CURRENT_SPACE = null, CURRENT_CONV = null, OPEN = new Set(), poll = null;
+var NOTIF_PREFS = { dm_enabled: true, dm_delivery: 'in_app', space_badges: true, comment_badges: true };
+var SPACE_UNREAD = {}, CONV_UNREAD = {}, LAST_DM_CHECK = null, notifPoll = null;
 
 var isStaff = function () { return !!(ME && (ME.is_owner || ME.is_coowner)); };
 var isMuted = function () {
@@ -62,6 +64,114 @@ function toast(msg) {
 /* одна и та же ошибка выводится и всплывашкой, и полосой сверху */
 function fail(msg) { toast(msg); reportError(msg); }
 
+function notificationDefaults() {
+  return { dm_enabled: true, dm_delivery: 'in_app', space_badges: true, comment_badges: true };
+}
+async function loadNotificationPrefs() {
+  var r = await sb.from('notification_preferences').select('*').eq('user_id', ME.id).maybeSingle();
+  if (r.error) {
+    if (String(r.error.message || '').indexOf('notification_preferences') >= 0) toast('Для синхронизации уведомлений выполните notifications-migration.sql в Supabase');
+    else fail('Настройки уведомлений не загрузились: ' + r.error.message);
+    NOTIF_PREFS = notificationDefaults();
+  } else if (!r.data) {
+    NOTIF_PREFS = notificationDefaults();
+    var ins = await sb.from('notification_preferences').insert(Object.assign({ user_id: ME.id }, NOTIF_PREFS));
+    if (ins.error) fail('Не удалось создать настройки уведомлений: ' + ins.error.message);
+  } else {
+    NOTIF_PREFS = { dm_enabled: r.data.dm_enabled !== false, dm_delivery: r.data.dm_delivery || 'in_app',
+      space_badges: r.data.space_badges !== false, comment_badges: r.data.comment_badges !== false };
+  }
+  renderNotificationSettings();
+}
+function renderNotificationSettings() {
+  if ($('#notifDmEnabled')) $('#notifDmEnabled').checked = !!NOTIF_PREFS.dm_enabled;
+  if ($('#notifSpaceBadges')) $('#notifSpaceBadges').checked = !!NOTIF_PREFS.space_badges;
+  if ($('#notifCommentBadges')) $('#notifCommentBadges').checked = !!NOTIF_PREFS.comment_badges;
+  if ($('#notifDmDelivery')) $('#notifDmDelivery').value = NOTIF_PREFS.dm_delivery || 'in_app';
+}
+async function saveNotificationPrefs() {
+  var next = { dm_enabled: $('#notifDmEnabled').checked, dm_delivery: $('#notifDmDelivery').value,
+    space_badges: $('#notifSpaceBadges').checked, comment_badges: $('#notifCommentBadges').checked };
+  var r = await sb.from('notification_preferences').upsert(Object.assign({ user_id: ME.id }, next), { onConflict: 'user_id' });
+  if (r.error) return fail('Не удалось сохранить настройки: ' + r.error.message);
+  NOTIF_PREFS = next; toast('Настройки уведомлений сохранены');
+  await refreshSpaceUnreadCounts(); renderSpaceList();
+}
+async function requestBrowserNotifications() {
+  if (!('Notification' in window)) return toast('Этот браузер не поддерживает уведомления');
+  var p = await Notification.requestPermission();
+  toast(p === 'granted' ? 'Уведомления браузера разрешены' : 'Разрешение на уведомления не получено');
+}
+function deliverDmNotification(m) {
+  if (!NOTIF_PREFS.dm_enabled) return;
+  var method = NOTIF_PREFS.dm_delivery || 'in_app';
+  var title = (m.profiles || {}).display_name || 'Новое сообщение';
+  var body = String(m.body || 'Вам пришло сообщение').slice(0, 120);
+  if ((method === 'in_app' || method === 'both') && document.visibilityState === 'visible') toast(title + ': ' + body);
+  if ((method === 'browser' || method === 'both') && 'Notification' in window && Notification.permission === 'granted') {
+    var n = new Notification(title, { body: body, tag: 'inomesto-dm-' + m.conversation_id });
+    n.onclick = function () { window.focus(); showTab('chats'); loadConversations().then(function () { openConv(m.conversation_id); }); n.close(); };
+  }
+}
+async function pollPersonalMessages() {
+  if (!ME) return;
+  if (!LAST_DM_CHECK) { LAST_DM_CHECK = new Date().toISOString(); return; }
+  try {
+    var since = LAST_DM_CHECK;
+    var mem = await sb.from('conversation_members').select('conversation_id').eq('user_id', ME.id);
+    var ids = (mem.data || []).map(function (x) { return x.conversation_id; });
+    if (!ids.length) { LAST_DM_CHECK = new Date().toISOString(); return; }
+    var cs = await sb.from('conversations').select('id').in('id', ids).eq('is_support', false);
+    var dmIds = (cs.data || []).map(function (x) { return x.id; });
+    if (!dmIds.length) { LAST_DM_CHECK = new Date().toISOString(); return; }
+    var r = await sb.from('messages').select('id,conversation_id,body,sender_id,created_at,profiles(display_name)')
+      .in('conversation_id', dmIds).neq('sender_id', ME.id).gt('created_at', since)
+      .order('created_at', { ascending: true }).limit(30);
+    LAST_DM_CHECK = new Date().toISOString();
+    (r.data || []).forEach(function (m) {
+      if (!CURRENT_CONV || CURRENT_CONV.id !== m.conversation_id || !$('#pane-chats').classList.contains('active') || document.visibilityState !== 'visible') deliverDmNotification(m);
+    });
+  } catch (e) { /* polling не должен прерывать работу сайта */ }
+}
+function startNotificationPolling() {
+  if (notifPoll) clearInterval(notifPoll);
+  LAST_DM_CHECK = new Date().toISOString();
+  notifPoll = setInterval(pollPersonalMessages, 8000);
+}
+async function markRead(scopeType, scopeId) {
+  if (!ME || !scopeId) return;
+  var r = await sb.from('notification_cursors').upsert({ user_id: ME.id, scope_type: scopeType,
+    scope_id: scopeId, last_seen_at: new Date().toISOString() }, { onConflict: 'user_id,scope_type,scope_id' });
+  if (r.error) console.warn(r.error.message);
+}
+async function markSpaceRead(spaceId) {
+  await Promise.all([markRead('space_posts', spaceId), markRead('space_comments', spaceId)]);
+}
+async function refreshSpaceUnreadCounts() {
+  if (!ME) return;
+  var memberships = await sb.from('space_members').select('space_id').eq('user_id', ME.id);
+  var ids = (memberships.data || []).map(function (m) { return m.space_id; }).filter(Boolean);
+  SPACE_UNREAD = {};
+  if (!ids.length) return;
+  var curs = await sb.from('notification_cursors').select('scope_type,scope_id,last_seen_at')
+    .eq('user_id', ME.id).in('scope_id', ids);
+  var cursorMap = {};
+  (curs.data || []).forEach(function (v) { cursorMap[v.scope_type + ':' + v.scope_id] = v.last_seen_at; });
+  var missing = ids.filter(function (id) { return !cursorMap['space_posts:' + id] || !cursorMap['space_comments:' + id]; });
+  for (var mi = 0; mi < missing.length; mi++) await markSpaceRead(missing[mi]);
+  missing.forEach(function (id) { var stamp = new Date().toISOString(); cursorMap['space_posts:' + id] = stamp; cursorMap['space_comments:' + id] = stamp; });
+  var posts = await sb.from('posts').select('id,space_id,author_id,created_at,comments(id,author_id,created_at)')
+    .in('space_id', ids).order('created_at', { ascending: false }).limit(1000);
+  if (posts.error) return;
+  (posts.data || []).forEach(function (p) {
+    if (!SPACE_UNREAD[p.space_id]) SPACE_UNREAD[p.space_id] = { posts: 0, comments: 0 };
+    var u = SPACE_UNREAD[p.space_id];
+    if (p.author_id !== ME.id && new Date(p.created_at) > new Date(cursorMap['space_posts:' + p.space_id])) u.posts++;
+    (p.comments || []).forEach(function (cm) {
+      if (cm.author_id !== ME.id && new Date(cm.created_at) > new Date(cursorMap['space_comments:' + p.space_id])) u.comments++;
+    });
+  });
+}
 function showScreen(id) {
   $$('.screen').forEach(function (s) { s.classList.remove('active'); });
   var el = document.getElementById('screen-' + id);
@@ -220,7 +330,9 @@ async function afterLogin(user) {
     $('#obUser').value = String(hint).toLowerCase().replace(/[^a-z0-9_.]/g, '').slice(0, 24);
     return;
   }
+  await loadNotificationPrefs();
   showScreen('app');
+  startNotificationPolling();
   if (isStaff()) $$('.staff-only').forEach(function (b) { b.hidden = false; });
   renderIdentity();
   showTab('feed');
@@ -248,7 +360,9 @@ $('#saveOnboarding').onclick = async function () {
     }).eq('id', ME.id).select().maybeSingle();
     if (r.error) return toast(r.error.message.indexOf('duplicate') >= 0 ? 'Этот логин уже занят' : r.error.message);
     ME = r.data;
+    await loadNotificationPrefs();
     showScreen('app');
+    startNotificationPolling();
     if (isStaff()) $$('.staff-only').forEach(function (b) { b.hidden = false; });
     renderIdentity();
     showTab('feed');
@@ -420,6 +534,7 @@ async function loadSpacePosts() {
   await signPaths(rows);
   await signAvatarPaths(rows.reduce(function (a, p) { a.push(p.author || {}); (p.comments || []).forEach(function (c) { a.push(c.author || {}); }); return a; }, []));
   box.innerHTML = rows.length ? rows.map(postHtml).join('') : '<div class="card sub">Публикаций пока нет.</div>';
+  await markSpaceRead(CURRENT_SPACE.id);
 }
 
 async function publishPost(spaceId) {
@@ -477,6 +592,9 @@ async function loadSpaces() {
       return s;
     });
 
+    await refreshSpaceUnreadCounts();
+    SPACES.forEach(function (s) { s._unread = SPACE_UNREAD[s.id] || { posts: 0, comments: 0 }; });
+
     if (CURRENT_SPACE) {
       var found = SPACES.filter(function (s) { return s.id === CURRENT_SPACE.id; })[0];
       if (found) { CURRENT_SPACE = found; return openSpace(found); }
@@ -499,7 +617,8 @@ function spaceCardHtml(s) {
     ' <span class="badge gray">' + (s.privacy === 'private' ? 'Закрытое' : 'Открытое') + '</span>' +
     (s.is_archived ? ' <span class="badge gray">В архиве</span>' : '') + '</div>' +
     '<div class="sub">' + nf(s._count) + ' участников · владелец @' + esc((s.owner || {}).username || '—') + '</div>' +
-    (s.description ? '<div class="space-description">' + esc(s.description) + '</div>' : '') + '</div>' +
+    (s.description ? '<div class="space-description">' + esc(s.description) + '</div>' : '') +
+    ((s._unread && ((NOTIF_PREFS.space_badges && s._unread.posts) || (NOTIF_PREFS.comment_badges && s._unread.comments))) ? '<div class="unread-pills">' + (NOTIF_PREFS.space_badges && s._unread.posts ? '<span class="unread-badge">' + nf(s._unread.posts) + ' новых</span>' : '') + (NOTIF_PREFS.comment_badges && s._unread.comments ? '<span class="unread-badge comments">' + nf(s._unread.comments) + ' комментариев</span>' : '') + '</div>' : '') + '</div>' +
     action + '</div></div>';
 }
 
@@ -682,6 +801,21 @@ async function loadConversations() {
       });
     }
     await signAvatarPaths((all.data || []).map(function (m) { return m.profiles || {}; }));
+    CONV_UNREAD = {};
+    var convIds = CONVS.filter(function (c) { return !c.staffView; }).map(function (c) { return c.id; });
+    if (convIds.length) {
+      var cc = await sb.from('notification_cursors').select('scope_id,last_seen_at').eq('user_id', ME.id)
+        .eq('scope_type', 'conversation').in('scope_id', convIds);
+      var cm = {};
+      (cc.data || []).forEach(function (v) { cm[v.scope_id] = v.last_seen_at; });
+      var fresh = convIds.filter(function (id) { return !cm[id]; });
+      for (var ci = 0; ci < fresh.length; ci++) { await markRead('conversation', fresh[ci]); cm[fresh[ci]] = new Date().toISOString(); }
+      var msgs = await sb.from('messages').select('conversation_id,sender_id,created_at')
+        .in('conversation_id', convIds).neq('sender_id', ME.id).order('created_at', { ascending: false }).limit(500);
+      (msgs.data || []).forEach(function (m) {
+        if (new Date(m.created_at) > new Date(cm[m.conversation_id])) CONV_UNREAD[m.conversation_id] = (CONV_UNREAD[m.conversation_id] || 0) + 1;
+      });
+    }
     renderConvList();
   } catch (e) { fail(e.message || e); }
 }
@@ -692,7 +826,7 @@ function renderConvList() {
       '<button class="profile-open" data-profile="' + esc((c._profile || {}).username || '') + '">' +
       (c.is_support ? '<span class="av sm">?</span>' : avatarMarkup(c._profile || {}, 'sm')) +
       '<span class="grow"><span style="font-size:13px;font-weight:650;display:block">' + esc(c.title) + '</span>' +
-      '<span class="sub">' + esc(c.sub) + '</span></span></button></div>';
+      '<span class="sub">' + esc(c.sub) + '</span></span>' + (CONV_UNREAD[c.id] ? '<span class="unread-badge">' + nf(CONV_UNREAD[c.id]) + '</span>' : '') + '</button></div>';
   }).join('') : '<div class="sub">Диалогов пока нет.</div>';
 }
 
@@ -702,6 +836,9 @@ async function openConv(id) {
   renderConvList();
   $('#chatHead').textContent = CURRENT_CONV.title;
   await loadMessages();
+  await markRead('conversation', id);
+  CONV_UNREAD[id] = 0;
+  renderConvList();
   clearInterval(poll);
   poll = setInterval(loadMessages, 7000);
 }
@@ -720,6 +857,7 @@ async function loadMessages() {
       '<small>' + (mine ? 'Вы' : esc(label)) + ' · ' + dateF(m.created_at) + '</small></div>';
   }).join('') || '<div class="empty">Сообщений пока нет</div>';
   box.scrollTop = box.scrollHeight;
+  if (CURRENT_CONV) { await markRead('conversation', CURRENT_CONV.id); CONV_UNREAD[CURRENT_CONV.id] = 0; renderConvList(); }
 }
 
 async function sendMessage() {
@@ -887,6 +1025,9 @@ $('#saveProfile').onclick = async function () {
     toast('Сохранено');
   } catch (e) { fail(e.message || e); }
 };
+
+$('#saveNotificationPrefs').onclick = saveNotificationPrefs;
+$('#enableBrowserNotifications').onclick = requestBrowserNotifications;
 
 /* ================= ЖАЛОБЫ ================= */
 async function reportPost(postId) {

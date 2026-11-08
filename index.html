@@ -123,6 +123,25 @@
         </label>
         <button class="btn primary" id="saveProfile">Сохранить</button>
       </div>
+      <div class="card">
+        <h3>Уведомления</h3>
+        <p class="muted">Настройки сохраняются в аккаунте и действуют на всех ваших устройствах. Лайки не отправляют уведомлений.</p>
+        <label class="field check"><input type="checkbox" id="notifDmEnabled" checked> Новые сообщения в личных чатах</label>
+        <label class="field"><span>Как показывать сообщения</span>
+          <select id="notifDmDelivery">
+            <option value="in_app">Всплывающее уведомление в Inomesto</option>
+            <option value="browser">Уведомление браузера</option>
+            <option value="both">Оба способа</option>
+          </select>
+        </label>
+        <button class="btn ghost" id="enableBrowserNotifications" type="button">Разрешить уведомления браузера</button>
+        <div class="sub mt">Уведомления браузера работают, пока сайт открыт. Для них нужно разрешение браузера.</div>
+        <hr class="settings-divider">
+        <label class="field check"><input type="checkbox" id="notifSpaceBadges" checked> Счётчики новых публикаций в каналах и группах</label>
+        <label class="field check"><input type="checkbox" id="notifCommentBadges" checked> Счётчики новых комментариев</label>
+        <p class="sub">Публикации в каналах и группах, а также комментарии по умолчанию показываются только счётчиками — без всплывающих уведомлений.</p>
+        <button class="btn primary" id="saveNotificationPrefs">Сохранить настройки уведомлений</button>
+      </div>
       <div class="card"><h3>Мои предупреждения</h3><div id="myWarns" class="muted">Загрузка…</div></div>
       <div class="card">
         <h3>Проверка подключения</h3>
@@ -197,6 +216,6 @@
 
 <div id="toast" class="toast"></div>
 <script src="config.js"></script>
-<script src="app.js?v=20261108-inomesto1"></script>
+<script src="app.js?v=20261108-notifications1"></script>
 </body>
 </html>
