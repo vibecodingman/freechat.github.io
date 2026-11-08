@@ -863,7 +863,7 @@ async function loadMessages() {
   box.innerHTML = (r.data || []).map(function (m) {
     var mine = m.sender_id === ME.id;
     var label = m.from_support ? 'Чат поддержки' : ((m.profiles || {}).display_name || 'Участник');
-    var body = esc(m.body || '').replace(/\\n/g, '<br>');
+    var body = esc(m.body || '').replace(/\n/g, '<br>');
     var files = (m.attachments || []).map(chatAttachmentHtml).join('');
     return '<div class="bubble' + (mine ? ' mine' : '') + '">' +
       (body ? '<div class="message-body">' + body + '</div>' : '') + files +
@@ -884,6 +884,7 @@ function renderChatStaged() {
 }
 $('#attachChatFile').onclick = function () {
   if (!ME) return toast('Сначала войдите в аккаунт');
+  if (!CURRENT_CONV) return toast('Сначала выберите чат');
   $('#chatFileInput').click();
 };
 $('#chatFileInput').onchange = function () {
@@ -906,7 +907,7 @@ async function uploadChatFiles(files) {
   var out = [];
   for (var i = 0; i < files.length; i++) {
     var f = files[i];
-    var clean = f.name.replace(/[^\\w.\\-]+/g, '_').slice(-60) || 'file';
+    var clean = f.name.replace(/[^\w.-]+/g, '_').slice(-60) || 'file';
     var path = ME.id + '/messages/' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) + '-' + clean;
     var up = await sb.storage.from('attachments').upload(path, f, {
       contentType: f.type || 'application/octet-stream', upsert: false
