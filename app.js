@@ -790,7 +790,7 @@ $('#openSupport').onclick = async function () {
 async function signAvatarPaths(profiles) {
   var paths = [];
   (profiles || []).forEach(function (p) {
-    if (p && p.avatar_url && !/^https?:\\/\\//i.test(p.avatar_url) && !AVATAR_URLS[p.avatar_url]) paths.push(p.avatar_url);
+    if (p && p.avatar_url && !/^https?:\/\//i.test(p.avatar_url) && !AVATAR_URLS[p.avatar_url]) paths.push(p.avatar_url);
   });
   paths = Array.from(new Set(paths));
   if (!paths.length) return;
@@ -799,7 +799,7 @@ async function signAvatarPaths(profiles) {
 }
 function avatarMarkup(p, extra) {
   p = p || {};
-  var src = p.avatar_url ? (/^https?:\\/\\//i.test(p.avatar_url) ? p.avatar_url : AVATAR_URLS[p.avatar_url]) : '';
+  var src = p.avatar_url ? (/^https?:\/\//i.test(p.avatar_url) ? p.avatar_url : AVATAR_URLS[p.avatar_url]) : '';
   return src ? '<img class="av ' + (extra || '') + '" src="' + esc(src) + '" alt="" loading="lazy">' :
     '<span class="av ' + (extra || '') + '">' + ini(p.display_name) + '</span>';
 }
@@ -831,7 +831,7 @@ document.addEventListener('click', function (e) {
 $('#avatarInput').onchange = async function () {
   var file = this.files && this.files[0]; this.value = '';
   if (!file) return;
-  if (!/^image\\/(png|jpe?g|webp|gif)$/i.test(file.type || '')) return toast('Выберите изображение PNG, JPG, WebP или GIF');
+  if (!/^image\/(png|jpe?g|webp|gif)$/i.test(file.type || '')) return toast('Выберите изображение PNG, JPG, WebP или GIF');
   if (file.size > 5 * 1024 * 1024) return toast('Аватар должен быть не больше 5 МБ');
   try {
     var ext = (file.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
