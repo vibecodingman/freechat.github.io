@@ -11,5 +11,5 @@ window.CONFIG = {
 
   /* Какие кнопки входа показывать.
      Поставьте false тому способу, который не включён в Supabase — кнопка просто исчезнет. */
-  PROVIDERS: { github: true, google: false, email: false }
+  PROVIDERS: { github: true, google: true, email: false }
 };
