@@ -270,3 +270,19 @@ textarea{resize:vertical;min-height:64px}
 .unread-badge{display:inline-flex;align-items:center;justify-content:center;min-width:22px;padding:3px 8px;border-radius:20px;background:#e9edff;color:#4254c5;font-size:11px;font-weight:750;white-space:nowrap}
 .unread-badge.comments{background:#e9f7f0;color:#24734b}
 .settings-divider{border:0;border-top:1px solid var(--line);margin:16px 0}
+
+
+/* --- Голосовые сообщения и реакции --- */
+.chat-voice{flex:0 0 auto;white-space:nowrap;padding:9px 11px}
+.chat-voice.recording{background:#ffe8e8;color:#b42318}
+.chat-reactions{display:flex;gap:4px;flex-wrap:wrap;margin-top:7px}
+.chat-reaction{border:1px solid #dfe4eb;background:#ffffffa8;color:inherit;border-radius:20px;padding:3px 7px;font-size:12px;line-height:1.4;cursor:pointer}
+.chat-reaction span{font-size:11px;opacity:.8}
+.chat-reaction.mine{background:#e5e9ff;border-color:#9ca8ff;color:#3444b8}
+.bubble.mine .chat-reaction{color:#30394b}
+.bubble.mine .chat-reaction.mine{background:#fff;border-color:#fff;color:#3444b8}
+@media(max-width:560px){
+  .chat-input{gap:5px;padding:8px}
+  .chat-attach,.chat-voice{padding:9px 8px;font-size:12px}
+  #sendMsg{padding:9px 10px;font-size:12px}
+}

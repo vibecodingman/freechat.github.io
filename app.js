@@ -45,6 +45,8 @@ var sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, {
 
 var ME = null, STAGED = [], FEED = [], SIGNED = {}, AVATAR_URLS = {}, SPACES = [], CONVS = [];
 var CHAT_STAGED = [], CHAT_SENDING = false;
+var CHAT_RECORDER = null, CHAT_RECORD_STREAM = null, CHAT_RECORD_PARTS = [], CHAT_RECORD_TIMER = null;
+var CHAT_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
 
 function makeUuid() {
   if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
@@ -859,19 +861,97 @@ async function loadMessages() {
     .eq('conversation_id', CURRENT_CONV.id).order('created_at').limit(300);
   if (r.error) { $('#messages').innerHTML = '<div class="sub">' + esc(r.error.message) + '</div>'; return; }
   await signMessagePaths(r.data || []);
+  var messageIds = (r.data || []).map(function (m) { return m.id; });
+  var reactionMap = {};
+  if (messageIds.length) {
+    var rx = await sb.from('message_reactions').select('message_id,user_id,emoji').in('message_id', messageIds);
+    if (rx.error) console.warn('Реакции не загрузились:', rx.error.message);
+    (rx.data || []).forEach(function (x) {
+      if (!reactionMap[x.message_id]) reactionMap[x.message_id] = {};
+      if (!reactionMap[x.message_id][x.emoji]) reactionMap[x.message_id][x.emoji] = { count: 0, mine: false };
+      reactionMap[x.message_id][x.emoji].count++;
+      if (x.user_id === ME.id) reactionMap[x.message_id][x.emoji].mine = true;
+    });
+  }
   var box = $('#messages');
   box.innerHTML = (r.data || []).map(function (m) {
     var mine = m.sender_id === ME.id;
     var label = m.from_support ? 'Чат поддержки' : ((m.profiles || {}).display_name || 'Участник');
     var body = esc(m.body || '').replace(/\n/g, '<br>');
     var files = (m.attachments || []).map(chatAttachmentHtml).join('');
+    var groups = reactionMap[m.id] || {};
+    var reactionHtml = CHAT_REACTIONS.map(function (emoji) {
+      var item = groups[emoji];
+      return '<button type="button" class="chat-reaction' + (item && item.mine ? ' mine' : '') + '" data-react-message="' + m.id + '" data-react-emoji="' + emoji + '" title="Поставить реакцию">' + emoji + (item ? ' <span>' + item.count + '</span>' : '') + '</button>';
+    }).join('');
     return '<div class="bubble' + (mine ? ' mine' : '') + '">' +
       (body ? '<div class="message-body">' + body + '</div>' : '') + files +
-      '<small>' + (mine ? 'Вы' : esc(label)) + ' · ' + dateF(m.created_at) + '</small></div>';
+      '<small>' + (mine ? 'Вы' : esc(label)) + ' · ' + dateF(m.created_at) + '</small>' +
+      '<div class="chat-reactions">' + reactionHtml + '</div></div>';
   }).join('') || '<div class="empty">Сообщений пока нет</div>';
   box.scrollTop = box.scrollHeight;
   if (CURRENT_CONV) { await markRead('conversation', CURRENT_CONV.id); CONV_UNREAD[CURRENT_CONV.id] = 0; renderConvList(); }
 }
+
+function stopVoiceRecording() {
+  if (CHAT_RECORD_TIMER) clearTimeout(CHAT_RECORD_TIMER);
+  CHAT_RECORD_TIMER = null;
+  if (CHAT_RECORDER && CHAT_RECORDER.state !== 'inactive') CHAT_RECORDER.stop();
+}
+function releaseVoiceStream() {
+  if (CHAT_RECORD_STREAM) CHAT_RECORD_STREAM.getTracks().forEach(function (track) { track.stop(); });
+  CHAT_RECORD_STREAM = null;
+}
+async function startVoiceRecording() {
+  if (!ME) return toast('Сначала войдите в аккаунт');
+  if (!CURRENT_CONV) return toast('Сначала выберите чат');
+  if (CHAT_STAGED.length >= 10) return toast('Сначала отправьте или удалите часть вложений');
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+    return toast('Запись голоса не поддерживается этим браузером');
+  }
+  try {
+    CHAT_RECORD_STREAM = await navigator.mediaDevices.getUserMedia({ audio: true });
+    CHAT_RECORD_PARTS = [];
+    var mime = '';
+    if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) mime = 'audio/webm;codecs=opus';
+    else if (MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')) mime = 'audio/ogg;codecs=opus';
+    CHAT_RECORDER = new MediaRecorder(CHAT_RECORD_STREAM, mime ? { mimeType: mime } : undefined);
+    CHAT_RECORDER.ondataavailable = function (event) {
+      if (event.data && event.data.size) CHAT_RECORD_PARTS.push(event.data);
+    };
+    CHAT_RECORDER.onstop = function () {
+      var type = CHAT_RECORDER && CHAT_RECORDER.mimeType || mime || 'audio/webm';
+      var ext = type.indexOf('ogg') >= 0 ? 'ogg' : 'webm';
+      if (CHAT_RECORD_PARTS.length) {
+        var blob = new Blob(CHAT_RECORD_PARTS, { type: type });
+        if (blob.size && CHAT_STAGED.length < 10) {
+          CHAT_STAGED.push(new File([blob], 'Голосовое сообщение.' + ext, { type: type, lastModified: Date.now() }));
+          renderChatStaged();
+          toast('Голосовое сообщение готово к отправке');
+        }
+      }
+      CHAT_RECORD_PARTS = [];
+      CHAT_RECORDER = null;
+      releaseVoiceStream();
+      if ($('#recordVoice')) {
+        $('#recordVoice').textContent = '🎙 Голосовое';
+        $('#recordVoice').classList.remove('recording');
+      }
+    };
+    CHAT_RECORDER.start(250);
+    $('#recordVoice').textContent = '■ Завершить запись';
+    $('#recordVoice').classList.add('recording');
+    toast('Идёт запись. Нажмите «Завершить запись», когда закончите.');
+    CHAT_RECORD_TIMER = setTimeout(stopVoiceRecording, 180000);
+  } catch (e) {
+    releaseVoiceStream();
+    fail('Не удалось начать запись: ' + (e.message || e));
+  }
+}
+$('#recordVoice').onclick = function () {
+  if (CHAT_RECORDER && CHAT_RECORDER.state !== 'inactive') stopVoiceRecording();
+  else startVoiceRecording();
+};
 
 function renderChatStaged() {
   var box = $('#chatStaged');
@@ -973,6 +1053,26 @@ async function sendMessage() {
 }
 $('#sendMsg').onclick = sendMessage;
 $('#msgInput').addEventListener('keydown', function (e) { if (e.key === 'Enter') sendMessage(); });
+
+$('#messages').addEventListener('click', async function (e) {
+  var btn = e.target.closest('[data-react-message]');
+  if (!btn || !ME) return;
+  var messageId = btn.dataset.reactMessage;
+  var emoji = btn.dataset.reactEmoji;
+  btn.disabled = true;
+  try {
+    var existing = await sb.from('message_reactions').select('id')
+      .eq('message_id', messageId).eq('user_id', ME.id).eq('emoji', emoji).maybeSingle();
+    if (existing.error) throw existing.error;
+    var result = existing.data
+      ? await sb.from('message_reactions').delete().eq('id', existing.data.id)
+      : await sb.from('message_reactions').insert({ message_id: messageId, user_id: ME.id, emoji: emoji });
+    if (result.error) throw result.error;
+    await loadMessages();
+  } catch (err) { fail('Не удалось сохранить реакцию: ' + (err.message || err)); btn.disabled = false; }
+});
+
+
 
 $('#startDm').onclick = async function () {
   try {
