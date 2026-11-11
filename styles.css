@@ -282,7 +282,12 @@ textarea{resize:vertical;min-height:64px}
 .chat-reaction.mine{background:#e5e9ff;border-color:#9ca8ff;color:#3444b8}
 .bubble.mine .chat-reaction{color:#30394b}
 .bubble.mine .chat-reaction.mine{background:#fff;border-color:#fff;color:#3444b8}
-.chat-reaction-tools{position:absolute;z-index:8;right:7px;bottom:calc(100% + 5px);display:flex;flex-direction:column;align-items:flex-end;opacity:0;visibility:hidden;transform:translateY(4px);transition:opacity .14s,transform .14s,visibility .14s;pointer-events:none}
+.chat-reaction-tools{position:absolute;z-index:8;right:7px;bottom:100%;display:flex;flex-direction:column;align-items:flex-end;opacity:0;visibility:hidden;transform:translateY(4px);transition:opacity .14s,transform .14s,visibility .14s;pointer-events:none}
+/* У первого сообщения панель открывается вниз: верхний край списка не обрезает её. */
+#messages > .bubble:first-child .chat-reaction-tools{top:calc(100% + 5px);bottom:auto;transform:translateY(-4px)}
+#messages > .bubble:first-child:hover .chat-reaction-tools,
+#messages > .bubble:first-child:focus-within .chat-reaction-tools,
+#messages > .bubble:first-child.reaction-open .chat-reaction-tools{transform:translateY(0)}
 .bubble:hover .chat-reaction-tools,.bubble:focus-within .chat-reaction-tools,.bubble.reaction-open .chat-reaction-tools{opacity:1;visibility:visible;transform:translateY(0);pointer-events:auto}
 .chat-reaction-quick{display:flex;align-items:center;gap:3px;padding:4px;background:#fff;border:1px solid #e4e8ee;border-radius:24px;box-shadow:0 5px 18px #17233420;white-space:nowrap}
 .chat-picker-emoji,.chat-picker-more{width:30px;height:30px;display:grid;place-items:center;padding:0;border:0;border-radius:50%;background:transparent;cursor:pointer;font-size:18px;line-height:1}
