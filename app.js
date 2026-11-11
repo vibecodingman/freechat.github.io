@@ -874,25 +874,37 @@ async function loadMessages() {
     });
   }
   var box = $('#messages');
+  var quickReactions = CHAT_REACTIONS.slice(0, 5);
   box.innerHTML = (r.data || []).map(function (m) {
     var mine = m.sender_id === ME.id;
     var label = m.from_support ? 'Чат поддержки' : ((m.profiles || {}).display_name || 'Участник');
     var body = esc(m.body || '').replace(/\n/g, '<br>');
     var files = (m.attachments || []).map(chatAttachmentHtml).join('');
     var groups = reactionMap[m.id] || {};
-    var reactionHtml = CHAT_REACTIONS.map(function (emoji) {
+    var reactionHtml = CHAT_REACTIONS.filter(function (emoji) { return !!groups[emoji]; }).map(function (emoji) {
       var item = groups[emoji];
-      return '<button type="button" class="chat-reaction' + (item && item.mine ? ' mine' : '') + '" data-react-message="' + m.id + '" data-react-emoji="' + emoji + '" title="Поставить реакцию">' + emoji + (item ? ' <span>' + item.count + '</span>' : '') + '</button>';
+      return '<button type="button" class="chat-reaction' + (item.mine ? ' mine' : '') + '" data-react-message="' + m.id + '" data-react-emoji="' + emoji + '" title="Убрать или поставить реакцию">' + emoji + ' <span>' + item.count + '</span></button>';
     }).join('');
-    return '<div class="bubble' + (mine ? ' mine' : '') + '">' +
+    var quickHtml = quickReactions.map(function (emoji) {
+      return '<button type="button" class="chat-picker-emoji" data-react-message="' + m.id + '" data-react-emoji="' + emoji + '" aria-label="Поставить реакцию ' + emoji + '">' + emoji + '</button>';
+    }).join('');
+    var allHtml = CHAT_REACTIONS.map(function (emoji) {
+      return '<button type="button" class="chat-picker-emoji" data-react-message="' + m.id + '" data-react-emoji="' + emoji + '" aria-label="Поставить реакцию ' + emoji + '">' + emoji + '</button>';
+    }).join('');
+    return '<div class="bubble' + (mine ? ' mine' : '') + '" data-message-bubble>' +
+      '<div class="chat-reaction-tools">' +
+        '<div class="chat-reaction-quick">' + quickHtml +
+          '<button type="button" class="chat-picker-more" data-react-more aria-label="Показать все эмодзи" title="Все эмодзи">＋</button>' +
+        '</div>' +
+        '<div class="chat-reaction-expanded" hidden>' + allHtml + '</div>' +
+      '</div>' +
       (body ? '<div class="message-body">' + body + '</div>' : '') + files +
       '<small>' + (mine ? 'Вы' : esc(label)) + ' · ' + dateF(m.created_at) + '</small>' +
-      '<div class="chat-reactions">' + reactionHtml + '</div></div>';
+      (reactionHtml ? '<div class="chat-reactions">' + reactionHtml + '</div>' : '') + '</div>';
   }).join('') || '<div class="empty">Сообщений пока нет</div>';
   box.scrollTop = box.scrollHeight;
   if (CURRENT_CONV) { await markRead('conversation', CURRENT_CONV.id); CONV_UNREAD[CURRENT_CONV.id] = 0; renderConvList(); }
 }
-
 function stopVoiceRecording() {
   if (CHAT_RECORD_TIMER) clearTimeout(CHAT_RECORD_TIMER);
   CHAT_RECORD_TIMER = null;
@@ -1055,21 +1067,48 @@ $('#sendMsg').onclick = sendMessage;
 $('#msgInput').addEventListener('keydown', function (e) { if (e.key === 'Enter') sendMessage(); });
 
 $('#messages').addEventListener('click', async function (e) {
+  var more = e.target.closest('[data-react-more]');
+  if (more) {
+    e.preventDefault();
+    e.stopPropagation();
+    var bubble = more.closest('[data-message-bubble]');
+    var expanded = bubble && bubble.querySelector('.chat-reaction-expanded');
+    if (expanded) {
+      expanded.hidden = !expanded.hidden;
+      bubble.classList.toggle('reaction-expanded-open', !expanded.hidden);
+    }
+    return;
+  }
+
   var btn = e.target.closest('[data-react-message]');
-  if (!btn || !ME) return;
-  var messageId = btn.dataset.reactMessage;
-  var emoji = btn.dataset.reactEmoji;
-  btn.disabled = true;
-  try {
-    var existing = await sb.from('message_reactions').select('id')
-      .eq('message_id', messageId).eq('user_id', ME.id).eq('emoji', emoji).maybeSingle();
-    if (existing.error) throw existing.error;
-    var result = existing.data
-      ? await sb.from('message_reactions').delete().eq('id', existing.data.id)
-      : await sb.from('message_reactions').insert({ message_id: messageId, user_id: ME.id, emoji: emoji });
-    if (result.error) throw result.error;
-    await loadMessages();
-  } catch (err) { fail('Не удалось сохранить реакцию: ' + (err.message || err)); btn.disabled = false; }
+  if (btn && !e.target.closest('[data-react-more]')) {
+    if (!ME) return;
+    var messageId = btn.dataset.reactMessage;
+    var emoji = btn.dataset.reactEmoji;
+    btn.disabled = true;
+    try {
+      var existing = await sb.from('message_reactions').select('id')
+        .eq('message_id', messageId).eq('user_id', ME.id).eq('emoji', emoji).maybeSingle();
+      if (existing.error) throw existing.error;
+      var result = existing.data
+        ? await sb.from('message_reactions').delete().eq('id', existing.data.id)
+        : await sb.from('message_reactions').insert({ message_id: messageId, user_id: ME.id, emoji: emoji });
+      if (result.error) throw result.error;
+      await loadMessages();
+    } catch (err) { fail('Не удалось сохранить реакцию: ' + (err.message || err)); btn.disabled = false; }
+    return;
+  }
+
+  var bubbleTap = e.target.closest('[data-message-bubble]');
+  if (bubbleTap && window.matchMedia && window.matchMedia('(max-width: 760px)').matches) {
+    var wasOpen = bubbleTap.classList.contains('reaction-open');
+    $('#messages [data-message-bubble].reaction-open').forEach(function (item) {
+      item.classList.remove('reaction-open', 'reaction-expanded-open');
+      var panel = item.querySelector('.chat-reaction-expanded');
+      if (panel) panel.hidden = true;
+    });
+    if (!wasOpen) bubbleTap.classList.add('reaction-open');
+  }
 });
 
 
