@@ -1361,7 +1361,7 @@ $$('[data-staff]').forEach(function (btn) {
 
 /* ================= ОБРАБОТЧИК КЛИКОВ ================= */
 document.addEventListener('click', async function (e) {
-  var t = e.target.closest('[data-like],[data-cmt],[data-report],[data-del],[data-open-space],[data-back-spaces],[data-join],[data-invite],[data-del-space],[data-conv],[data-verdict],[data-cancel-del],[data-open-support],[data-req],[data-member-admin],[data-member-kick],[data-member-ban],[data-comment-send]');
+  var t = e.target.closest('[data-like],[data-cmt],[data-report],[data-del],[data-open-space],[data-back-spaces],[data-join],[data-invite],[data-del-space],[data-conv],[data-verdict],[data-cancel-del],[data-open-support],[data-req],[data-member-admin],[data-member-kick],[data-member-ban],[data-comment-send],[data-chat-back]');
   if (!t) return;
   var d = t.dataset;
 
