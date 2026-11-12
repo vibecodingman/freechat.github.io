@@ -232,6 +232,7 @@ textarea{resize:vertical;min-height:64px}
     padding: 0 14px;
     margin-bottom: 10px;
   }
+  /* На телефоне список диалогов остаётся слева отдельной вертикальной колонкой. */
   #pane-chats .chat-layout {
     flex: 1 1 auto;
     min-height: calc(100dvh - 205px);
@@ -240,32 +241,83 @@ textarea{resize:vertical;min-height:64px}
     border-right: 0;
     border-radius: 0;
     margin-bottom: 0;
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-columns: minmax(116px, 38%) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
   }
   #pane-chats .chat-list {
     min-width: 0;
-    max-height: 132px;
-    overflow-x: auto;
-    overflow-y: hidden;
-    flex-wrap: nowrap;
+    max-height: none;
+    overflow-x: hidden;
+    overflow-y: auto;
+    display: block;
+    padding: 8px 6px;
+    border-right: 1px solid var(--line);
+    border-bottom: 0;
   }
   #pane-chats .chat-list .row {
-    flex: 0 0 230px;
-    flex-wrap: nowrap;
-    margin: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    margin: 0 0 10px;
+  }
+  #pane-chats .chat-list .row input,
+  #pane-chats .chat-list .row button {
+    width: 100%;
+    min-width: 0;
+    padding: 8px 6px;
+    font-size: 11px;
   }
   #pane-chats .conv {
-    flex: 0 0 160px;
+    min-width: 0;
+    width: 100%;
+    padding: 7px 5px;
+    flex: 0 0 auto;
+  }
+  #pane-chats .conv .profile-open {
+    width: 100%;
+    min-width: 0;
+    gap: 6px;
+  }
+  #pane-chats .conv .profile-open .grow {
+    min-width: 0;
+    overflow: hidden;
+  }
+  #pane-chats .conv .profile-open .grow > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  #pane-chats .conv .unread-badge {
+    min-width: 18px;
+    padding: 2px 5px;
+    font-size: 10px;
   }
   #pane-chats .chat-window {
+    min-width: 0;
     min-height: 0;
     height: 100%;
+  }
+  #pane-chats .chat-head {
+    padding: 12px 9px;
+    font-size: 13px;
+    overflow-wrap: anywhere;
   }
   #pane-chats .messages {
     max-height: none;
     min-height: 0;
     overflow-y: auto;
+    padding: 10px 7px;
+  }
+  #pane-chats .chat-input {
+    flex-wrap: wrap;
+  }
+  #pane-chats .chat-input #msgInput {
+    flex: 1 1 100%;
+    order: 2;
+  }
+  #pane-chats .chat-input #sendMsg {
+    order: 3;
   }
 }
 
@@ -311,4 +363,26 @@ textarea{resize:vertical;min-height:64px}
   .chat-attach,.chat-voice{padding:9px 8px;font-size:12px}
   #sendMsg{padding:9px 10px;font-size:12px}
   .chat-picker-emoji,.chat-picker-more{width:28px;height:28px;font-size:17px}
+}
+
+
+/* Аватары в списке диалогов всегда остаются квадратными и не сжимаются flex-контейнером. */
+.conv .profile-open .av {
+  display: block;
+  width: 38px;
+  height: 38px;
+  min-width: 38px;
+  min-height: 38px;
+  aspect-ratio: 1 / 1;
+  flex: 0 0 38px;
+  object-fit: cover;
+}
+@media (max-width: 760px) {
+  #pane-chats .conv .profile-open .av {
+    width: 34px;
+    height: 34px;
+    min-width: 34px;
+    min-height: 34px;
+    flex-basis: 34px;
+  }
 }
