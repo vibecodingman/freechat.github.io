@@ -43,7 +43,7 @@ var sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
 });
 
-var ME = null, STAGED = [], FEED = [], SIGNED = {}, AVATAR_URLS = {}, SPACES = [], CONVS = [];
+var ME = null, STAGED = [], FEED = [], SIGNED = {}, AVATAR_URLS = {}, SPACES = [], SPACE_SEARCH_RESULTS = [], SPACE_MY_ROLES = {}, SPACE_PENDING = {}, SPACE_SEARCH_TIMER = null, CONVS = [];
 var CHAT_STAGED = [], CHAT_SENDING = false;
 var CHAT_RECORDER = null, CHAT_RECORD_STREAM = null, CHAT_RECORD_PARTS = [], CHAT_RECORD_TIMER = null;
 var CHAT_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
@@ -590,33 +590,65 @@ async function publishPost(spaceId) {
 /* ================= ПРОСТРАНСТВА ================= */
 async function loadSpaces() {
   try {
-    var r = await sb.from('spaces')
-      .select('id,type,name,description,privacy,comments_enabled,is_archived,owner_id,' +
-              'owner:profiles!spaces_owner_id_fkey(display_name,username),members:space_members(count)')
-      .order('created_at', { ascending: false }).limit(60);
-    if (r.error) { fail('Пространства не загрузились: ' + r.error.message); return; }
-
     var mine = await sb.from('space_members').select('space_id,role').eq('user_id', ME.id);
-    var myMap = {};
-    (mine.data || []).forEach(function (m) { myMap[m.space_id] = m; });
+    if (mine.error) { fail('Не удалось загрузить подписки: ' + mine.error.message); return; }
+    SPACE_MY_ROLES = {};
+    (mine.data || []).forEach(function (m) { SPACE_MY_ROLES[m.space_id] = m.role; });
+
     var reqs = await sb.from('join_requests').select('space_id,status').eq('user_id', ME.id);
-    var reqMap = {};
-    (reqs.data || []).forEach(function (q) { reqMap[q.space_id] = q.status; });
+    if (reqs.error) { fail('Не удалось загрузить заявки: ' + reqs.error.message); return; }
+    SPACE_PENDING = {};
+    (reqs.data || []).forEach(function (q) { SPACE_PENDING[q.space_id] = q.status; });
 
-    SPACES = (r.data || []).map(function (s) {
-      s._myRole = myMap[s.id] ? myMap[s.id].role : null;
-      s._pending = reqMap[s.id] === 'pending';
-      s._count = (s.members && s.members[0] && s.members[0].count) || 0;
-      return s;
-    });
-
+    var ids = (mine.data || []).map(function (m) { return m.space_id; }).filter(Boolean);
+    var rows = [];
+    if (ids.length) {
+      var r = await sb.from('spaces')
+        .select('id,type,name,description,privacy,comments_enabled,is_archived,owner_id,' +
+                'owner:profiles!spaces_owner_id_fkey(display_name,username),members:space_members(count)')
+        .in('id', ids).eq('type', 'channel').order('created_at', { ascending: false });
+      if (r.error) { fail('Каналы не загрузились: ' + r.error.message); return; }
+      rows = r.data || [];
+    }
+    SPACES = decorateSpaceRows(rows);
     await refreshSpaceUnreadCounts();
     SPACES.forEach(function (s) { s._unread = SPACE_UNREAD[s.id] || { posts: 0, comments: 0 }; });
 
     if (CURRENT_SPACE) {
-      var found = SPACES.filter(function (s) { return s.id === CURRENT_SPACE.id; })[0];
+      var found = SPACES.concat(SPACE_SEARCH_RESULTS).filter(function (s) { return s.id === CURRENT_SPACE.id; })[0];
       if (found) { CURRENT_SPACE = found; return openSpace(found); }
     }
+    renderSpaceList();
+    var searchInput = $('#spaceSearchInput');
+    if (searchInput && searchInput.value.trim()) searchSpaces(searchInput.value.trim());
+  } catch (e) { fail(e.message || e); }
+}
+
+function decorateSpaceRows(rows) {
+  return (rows || []).map(function (s) {
+    s._myRole = SPACE_MY_ROLES[s.id] || null;
+    s._pending = SPACE_PENDING[s.id] === 'pending';
+    s._count = (s.members && s.members[0] && s.members[0].count) || 0;
+    s._unread = SPACE_UNREAD[s.id] || { posts: 0, comments: 0 };
+    return s;
+  });
+}
+
+async function searchSpaces(value) {
+  var term = String(value || '').trim();
+  if (!term) { SPACE_SEARCH_RESULTS = []; renderSpaceList(); return; }
+  var safe = term.replace(/[^\p{L}\p{N}\s_-]/gu, ' ').replace(/\s+/g, ' ').trim();
+  if (!safe) { SPACE_SEARCH_RESULTS = []; renderSpaceList(); return; }
+  try {
+    var r = await sb.from('spaces')
+      .select('id,type,name,description,privacy,comments_enabled,is_archived,owner_id,' +
+              'owner:profiles!spaces_owner_id_fkey(display_name,username),members:space_members(count)')
+      .or('name.ilike.%' + safe + '%,description.ilike.%' + safe + '%')
+      .order('created_at', { ascending: false }).limit(60);
+    if (r.error) { fail('Поиск не удался: ' + r.error.message); return; }
+    var input = $('#spaceSearchInput');
+    if (!input || input.value.trim() !== term) return;
+    SPACE_SEARCH_RESULTS = decorateSpaceRows((r.data || []).filter(function (s) { return !s.is_archived; }));
     renderSpaceList();
   } catch (e) { fail(e.message || e); }
 }
@@ -649,17 +681,22 @@ function spaceSectionHtml(title, hint, items, emptyText) {
 
 function renderSpaceList() {
   CURRENT_SPACE = null;
-  var joinedChannels = SPACES.filter(function (s) { return s.type === 'channel' && !!s._myRole; });
-  var otherChannels = SPACES.filter(function (s) { return s.type === 'channel' && !s._myRole; });
-  var communities = SPACES.filter(function (s) { return s.type !== 'channel'; });
-  if (!SPACES.length) {
-    $('#spaceView').innerHTML = '<div class="card empty"><h3>Здесь пока нет каналов и сообществ</h3><p>Создайте своё пространство или загляните позже.</p></div>';
-    return;
-  }
-  $('#spaceView').innerHTML =
-    spaceSectionHtml('Мои подписки', 'Каналы, публикации которых появляются в вашей ленте', joinedChannels, 'Вы пока не подписаны ни на один канал.') +
-    spaceSectionHtml('Найти каналы', 'Подпишитесь, чтобы следить за новыми публикациями', otherChannels, 'Сейчас нет доступных каналов.') +
-    spaceSectionHtml('Сообщества', 'Пространства для общения участников', communities, 'Пока нет сообществ.');
+  var input = $('#spaceSearchInput');
+  var term = input ? input.value.trim() : '';
+  var html = spaceSectionHtml('Мои каналы', 'Все каналы, на которые вы подписаны', SPACES,
+    'Вы пока не подписаны ни на один канал. Найдите интересный канал через поиск выше.');
+  if (term) html += spaceSectionHtml('Результаты поиска', 'Каналы и сообщества по вашему запросу', SPACE_SEARCH_RESULTS,
+    'Ничего не найдено. Попробуйте другое название или ключевое слово.');
+  $('#spaceView').innerHTML = html;
+}
+
+if ($('#spaceSearchInput')) {
+  $('#spaceSearchInput').addEventListener('input', function () {
+    var term = this.value.trim();
+    clearTimeout(SPACE_SEARCH_TIMER);
+    if (!term) { SPACE_SEARCH_RESULTS = []; renderSpaceList(); return; }
+    SPACE_SEARCH_TIMER = setTimeout(function () { searchSpaces(term); }, 320);
+  });
 }
 
 async function openSpace(s) {
@@ -667,8 +704,8 @@ async function openSpace(s) {
   var adm = s._myRole === 'owner' || s._myRole === 'admin' || isStaff();
   var canPost = s.type === 'channel' ? adm : (!!s._myRole || isStaff());
 
-  var html = '<div class="card"><div class="row between wrap gap">' +
-    '<button class="btn ghost" data-back-spaces="1">← Все пространства</button>' +
+  var html = '<div class="card space-header-card"><div class="space-header-actions">' +
+    '<button class="btn ghost" data-back-spaces="1">← К списку каналов</button>' +
     '<div class="row gap wrap">' +
     (!s._myRole ? (s._pending
       ? '<span class="badge gray">Заявка отправлена</span>'
@@ -676,21 +713,23 @@ async function openSpace(s) {
     (adm ? '<button class="btn ghost" data-invite="' + s.id + '">Ссылка-приглашение</button>' : '') +
     (adm ? '<button class="btn ghost" data-del-space="' + s.id + '">Удалить</button>' : '') +
     '</div></div>' +
-    '<div class="space-row mt"><div class="space-ico">' + ini(s.name) + '</div><div class="grow">' +
-    '<div><b style="font-size:17px">' + esc(s.name) + '</b> <span class="badge gray">' + (s.type === 'channel' ? 'Канал' : 'Сообщество') + '</span></div>' +
+    '<div class="space-row space-profile"><div class="space-ico">' + ini(s.name) + '</div><div class="grow">' +
+    '<div class="space-title-line"><b>' + esc(s.name) + '</b> <span class="badge gray">' + (s.type === 'channel' ? 'Канал' : 'Сообщество') + '</span></div>' +
     '<div class="sub">' + nf(s._count) + ' участников · ' + (s.comments_enabled ? 'комментарии включены' : 'комментарии отключены') + '</div>' +
-    (s.description ? '<div class="sub">' + esc(s.description) + '</div>' : '') + '</div></div>';
+    (s.description ? '<div class="space-description">' + esc(s.description) + '</div>' : '') + '</div></div></div>';
 
   if (canPost) {
-    html += '<div class="mt"><textarea id="spaceComposerText" placeholder="Новая публикация в «' + esc(s.name) + '»"></textarea>' +
-      '<div class="row between wrap gap mt"><div class="row gap wrap">' +
-      '<label class="chip"><input type="file" id="spacePickPhoto" accept="image/*" multiple hidden>Фото</label>' +
-      '<label class="chip"><input type="file" id="spacePickFile" multiple hidden>Файл</label>' +
-      '<span class="sub">до 100 МБ, без видео</span></div>' +
-      '<label class="check"><input type="checkbox" id="spaceAllowComments"' + (s.comments_enabled ? ' checked' : '') + '> Комментарии</label>' +
-      '<button class="btn primary" id="spacePublish">Опубликовать</button></div></div>';
+    html += '<section class="card space-composer-card">' +
+      '<div class="space-composer-heading"><div><h3>Новая публикация</h3><p>Поделитесь новостью или задайте вопрос участникам</p></div></div>' +
+      '<textarea id="spaceComposerText" class="space-composer-text" rows="4" placeholder="О чём хотите рассказать?"></textarea>' +
+      '<div class="staged" id="stagedSpace"></div>' +
+      '<div class="space-composer-footer"><div class="space-composer-tools">' +
+      '<label class="space-tool"><input type="file" id="spacePickPhoto" accept="image/*" multiple hidden><span aria-hidden="true">▧</span> Фото</label>' +
+      '<label class="space-tool"><input type="file" id="spacePickFile" multiple hidden><span aria-hidden="true">↥</span> Файл</label>' +
+      '<label class="space-comments-toggle"><input type="checkbox" id="spaceAllowComments"' + (s.comments_enabled ? ' checked' : '') + '> Комментарии</label>' +
+      '</div><button class="btn primary space-publish-btn" id="spacePublish">Опубликовать</button></div>' +
+      '<div class="space-composer-note">Можно прикрепить фото или файл размером до 100 МБ</div></section>';
   }
-  html += '<div class="staged" id="stagedSpace"></div></div>';
 
   html += '<div class="card"><h3>Участники</h3><div id="memberList" class="sub">Загрузка…</div></div>';
   if (adm) html += '<div class="card"><h3>Заявки на вступление</h3><div id="requestList" class="sub">Загрузка…</div></div>';
@@ -704,7 +743,6 @@ async function openSpace(s) {
   loadMembers(s.id, adm);
   if (adm) loadRequests(s.id);
 }
-
 async function loadMembers(spaceId, admin) {
   var box = $('#memberList');
   if (!box) return;
@@ -1402,10 +1440,10 @@ document.addEventListener('click', async function (e) {
     if (CURRENT_SPACE) loadSpacePosts(); else loadFeed();
     return;
   }
-  if (d.openSpace) { var s = SPACES.filter(function (x) { return x.id === d.openSpace; })[0]; if (s) openSpace(s); return; }
+  if (d.openSpace) { var s = SPACES.concat(SPACE_SEARCH_RESULTS).filter(function (x) { return x.id === d.openSpace; })[0]; if (s) openSpace(s); return; }
   if (d.backSpaces) { renderSpaceList(); return; }
   if (d.join) {
-    var sp = SPACES.filter(function (x) { return x.id === d.join; })[0] || {};
+    var sp = SPACES.concat(SPACE_SEARCH_RESULTS).filter(function (x) { return x.id === d.join; })[0] || {};
     if (sp.privacy === 'private') {
       var jr = await sb.from('join_requests').insert({ space_id: d.join, user_id: ME.id });
       toast(jr.error ? jr.error.message : 'Заявка отправлена владельцу');
