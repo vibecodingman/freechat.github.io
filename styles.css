@@ -413,3 +413,7 @@ textarea{resize:vertical;min-height:64px}
   #pane-chats.chat-selected .chat-head-profile{flex-wrap:wrap;gap:5px 8px}
   #pane-chats.chat-selected .chat-head-profile .sub{font-size:11px}
 }
+
+
+/* Keep semantic hidden state effective even when component styles set display:flex. */
+[hidden] { display: none !important; }

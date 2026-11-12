@@ -60,6 +60,9 @@ var NOTIF_PREFS = { dm_enabled: true, dm_delivery: 'in_app', space_badges: true,
 var SPACE_UNREAD = {}, CONV_UNREAD = {}, LAST_DM_CHECK = null, notifPoll = null;
 
 var isStaff = function () { return !!(ME && (ME.is_owner || ME.is_coowner)); };
+function syncStaffUI() {
+  $('.staff-only').forEach(function (el) { el.hidden = !isStaff(); });
+}
 var isMuted = function () {
   return !!(ME && (ME.muted_forever || (ME.muted_until && new Date(ME.muted_until) > new Date())));
 };
@@ -190,7 +193,11 @@ function showScreen(id) {
 }
 
 function showTab(name) {
-  $$('.pane').forEach(function (p) { p.classList.remove('active'); });
+  if (name === 'mod' && !isStaff()) {
+    toast('У вас нет доступа к панели модерации');
+    name = 'feed';
+  }
+  $('.pane').forEach(function (p) { p.classList.remove('active'); });
   var pane = document.getElementById('pane-' + name);
   if (pane) pane.classList.add('active');
   $$('[data-tab]').forEach(function (b) { b.classList.toggle('active', b.dataset.tab === name); });
@@ -344,7 +351,7 @@ async function afterLogin(user) {
   await loadNotificationPrefs();
   showScreen('app');
   startNotificationPolling();
-  if (isStaff()) $$('.staff-only').forEach(function (b) { b.hidden = false; });
+  syncStaffUI();
   renderIdentity();
   showTab('feed');
 }
@@ -374,7 +381,7 @@ $('#saveOnboarding').onclick = async function () {
     await loadNotificationPrefs();
     showScreen('app');
     startNotificationPolling();
-    if (isStaff()) $$('.staff-only').forEach(function (b) { b.hidden = false; });
+    syncStaffUI();
     renderIdentity();
     showTab('feed');
   } catch (e) { fail(e.message || e); }
