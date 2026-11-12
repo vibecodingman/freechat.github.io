@@ -754,15 +754,19 @@ $('#createSpace').onclick = async function () {
       return toast('Для закрытого пространства нужна галочка верификации');
     }
 
+    // Создаём ID на клиенте и не запрашиваем строку обратно до вступления
+    // создателя в space_members: SELECT-политика может скрывать пространство
+    // от пользователя, который ещё не стал его участником.
+    var spaceId = makeUuid();
     var r = await sb.from('spaces').insert({
-      owner_id: ME.id, type: $('#spType').value, name: name,
+      id: spaceId, owner_id: ME.id, type: $('#spType').value, name: name,
       description: $('#spDesc').value.trim(), privacy: privacy,
       comments_enabled: $('#spComments').checked
-    }).select().maybeSingle();
-    if (r.error) return fail('База отклонила создание: ' + r.error.message + '. Проверьте, что SQL-скрипт выполнен и вы вошли в аккаунт.');
+    });
+    if (r.error) return fail('База отклонила создание: ' + r.error.message + '. Проверьте правила доступа к таблице spaces.');
 
-    var m = await sb.from('space_members').insert({ space_id: r.data.id, user_id: ME.id, role: 'owner' });
-    if (m.error) toast('Пространство создано, но владелец не записан: ' + m.error.message);
+    var m = await sb.from('space_members').insert({ space_id: spaceId, user_id: ME.id, role: 'owner' });
+    if (m.error) return fail('Пространство создано, но не удалось добавить вас в участники: ' + m.error.message);
 
     closeSpaceModal();
     $('#spName').value = ''; $('#spDesc').value = '';
