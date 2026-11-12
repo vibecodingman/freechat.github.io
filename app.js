@@ -1431,7 +1431,7 @@ document.addEventListener('pointerdown', function (e) {
   memberPressTimer = setTimeout(function () {
     var panel = $('.member-actions', row);
     if (panel) {
-      $('.member-actions').forEach(function (p) { p.hidden = true; });
+      $$('.member-actions').forEach(function (p) { p.hidden = true; });
       panel.hidden = false;
       row.classList.add('member-actions-open');
       row.dataset.longPressed = '1';
@@ -1453,8 +1453,8 @@ document.addEventListener('click', function (e) {
     var panel = row && $('.member-actions', row);
     if (panel) {
       var opening = panel.hidden;
-      $('.member-actions').forEach(function (p) { p.hidden = true; });
-      $('.member-row-user').forEach(function (r) { r.classList.remove('member-actions-open'); });
+      $$('.member-actions').forEach(function (p) { p.hidden = true; });
+      $$('.member-row-user').forEach(function (r) { r.classList.remove('member-actions-open'); });
       panel.hidden = !opening;
       row.classList.toggle('member-actions-open', opening);
     }
@@ -1474,7 +1474,7 @@ document.addEventListener('contextmenu', function (e) {
   var panel = $('.member-actions', row);
   if (panel) {
     e.preventDefault();
-    $('.member-actions').forEach(function (p) { p.hidden = true; });
+    $$('.member-actions').forEach(function (p) { p.hidden = true; });
     panel.hidden = false;
     row.classList.add('member-actions-open');
   }
