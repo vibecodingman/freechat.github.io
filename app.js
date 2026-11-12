@@ -731,8 +731,12 @@ async function openSpace(s) {
       '<div class="space-composer-note">Можно прикрепить фото или файл размером до 100 МБ</div></section>';
   }
 
-  html += '<div class="card"><h3>Участники</h3><div id="memberList" class="sub">Загрузка…</div></div>';
-  if (adm) html += '<div class="card"><h3>Заявки на вступление</h3><div id="requestList" class="sub">Загрузка…</div></div>';
+  // Список участников и инструменты управления доступны только владельцу/администратору пространства
+  // или глобальной команде проекта.
+  if (adm) {
+    html += '<div class="card"><h3>Участники и управление</h3><div id="memberList" class="sub">Загрузка…</div></div>';
+    html += '<div class="card"><h3>Заявки на вступление</h3><div id="requestList" class="sub">Загрузка…</div></div>';
+  }
   html += '<div id="spacePosts"></div>';
 
   $('#spaceView').innerHTML = html;
@@ -740,8 +744,10 @@ async function openSpace(s) {
   if ($('#spacePickPhoto')) $('#spacePickPhoto').onchange = function () { addStaged(this.files); this.value = ''; };
   if ($('#spacePickFile')) $('#spacePickFile').onchange = function () { addStaged(this.files); this.value = ''; };
   loadSpacePosts();
-  loadMembers(s.id, adm);
-  if (adm) loadRequests(s.id);
+  if (adm) {
+    loadMembers(s.id, true);
+    loadRequests(s.id);
+  }
 }
 async function loadMembers(spaceId, admin) {
   var box = $('#memberList');
@@ -755,8 +761,8 @@ async function loadMembers(spaceId, admin) {
     var p = m.profiles || {};
     var actions = admin && m.role !== 'owner'
       ? '<div class="member-actions" hidden>' +
-        '<button class="act" data-member-admin="' + spaceId + ':' + m.user_id + '">Сделать админом</button>' +
-        '<button class="act" data-member-kick="' + spaceId + ':' + m.user_id + '">Исключить</button>' +
+        '<button class="act" data-member-admin="' + spaceId + ':' + m.user_id + '">Назначить администратором</button>' +
+        '<button class="act" data-member-kick="' + spaceId + ':' + m.user_id + '">Удалить из канала</button>' +
         '<button class="act" data-member-ban="' + spaceId + ':' + m.user_id + '">Заблокировать навсегда</button></div>'
       : '';
     return '<div class="member-row member-row-user" data-member-row="1">' +
