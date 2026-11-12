@@ -786,7 +786,8 @@ $('#openSpaceModal').onclick = function () {
 };
 $('#closeSpaceModal').onclick = closeSpaceModal;
 $('#spaceModal').onclick = function (e) { if (e.target === $('#spaceModal')) closeSpaceModal(); };
-$('#showAllSpaces').onclick = function () { CURRENT_SPACE = null; loadSpaces(); };
+var showAllSpacesBtn = $('#showAllSpaces');
+if (showAllSpacesBtn) showAllSpacesBtn.onclick = function () { CURRENT_SPACE = null; loadSpaces(); };
 
 $('#createSpace').onclick = async function () {
   try {
