@@ -417,3 +417,40 @@ textarea{resize:vertical;min-height:64px}
 
 /* Keep semantic hidden state effective even when component styles set display:flex. */
 [hidden] { display: none !important; }
+
+
+/* --- Обновлённая навигация по каналам и редактор публикаций --- */
+.space-search-card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin:0 0 20px;box-shadow:var(--shadow)}
+.space-search-label{display:block;font-size:14px;font-weight:700;margin:0 0 9px}
+.space-search-wrap{display:flex;align-items:center;gap:10px;border:1px solid #dfe4ec;background:#f8f9fc;border-radius:12px;padding:0 13px}
+.space-search-wrap>span{font-size:23px;line-height:1;color:var(--muted)}
+.space-search-wrap input{width:100%;min-width:0;border:0!important;background:transparent!important;box-shadow:none!important;padding:13px 0!important;font-size:15px}
+.space-search-card>.sub{margin:9px 1px 0;line-height:1.45}
+.space-header-card{padding:18px}
+.space-header-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.space-profile{margin-top:18px;align-items:flex-start}
+.space-title-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:20px;margin-bottom:5px}
+.space-title-line b{letter-spacing:-.35px}
+.space-composer-card{padding:18px}
+.space-composer-heading h3{font-size:17px;margin:0 0 4px}
+.space-composer-heading p{font-size:12px;color:var(--muted);margin:0 0 14px}
+.space-composer-text{display:block;width:100%;min-height:116px;resize:vertical;border:1px solid var(--line);border-radius:13px;background:#fafbfe;padding:13px 14px;font:inherit;line-height:1.55;outline:none}
+.space-composer-text:focus{border-color:#aeb9f5;box-shadow:0 0 0 3px #6676e51a;background:#fff}
+.space-composer-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:13px}
+.space-composer-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.space-tool{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);background:#fff;border-radius:10px;padding:8px 11px;font-size:13px;font-weight:650;color:var(--ink);cursor:pointer}
+.space-tool:hover{background:var(--soft);border-color:#d7dcf5}
+.space-tool span{font-size:17px;color:var(--accent);line-height:1}
+.space-comments-toggle{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--muted);padding:7px 4px}
+.space-comments-toggle input{accent-color:var(--accent)}
+.space-publish-btn{min-width:138px}
+.space-composer-note{font-size:11px;color:var(--muted);margin-top:10px}
+.space-composer-card .staged{margin:10px 0 0}
+@media(max-width:560px){
+  .space-search-card{padding:13px}
+  .space-header-card,.space-composer-card{padding:14px}
+  .space-header-actions{align-items:flex-start}
+  .space-composer-footer{align-items:stretch}
+  .space-composer-tools{width:100%}
+  .space-publish-btn{width:100%}
+}
