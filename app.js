@@ -905,6 +905,8 @@ function renderConvList() {
 }
 
 function showMobileChatList() {
+  clearInterval(poll);
+  poll = null;
   $('#pane-chats').classList.remove('chat-selected');
 }
 function renderChatHead() {
