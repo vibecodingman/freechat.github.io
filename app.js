@@ -753,13 +753,18 @@ async function loadMembers(spaceId, admin) {
   await signAvatarPaths((r.data || []).map(function (m) { return m.profiles || {}; }));
   box.innerHTML = (r.data || []).map(function (m) {
     var p = m.profiles || {};
-    return '<div class="member-row"><button class="profile-open" data-profile="' + esc(p.username || '') + '">' + avatarMarkup(p, 'sm') + '<span>' + esc(p.display_name || '—') + ' <span class="sub">@' + esc(p.username || '—') + '</span></span></button>' +
-      '<span class="badge gray">' + ({ owner: 'владелец', admin: 'админ', member: 'участник' }[m.role] || m.role) + '</span>' +
-      (m.banned_forever ? '<span class="badge gray">заблокирован</span>' : '') +
-      (admin && m.role !== 'owner' ? '<button class="act" data-member-admin="' + spaceId + ':' + m.user_id + '">Сделать админом</button>' +
+    var actions = admin && m.role !== 'owner'
+      ? '<div class="member-actions" hidden>' +
+        '<button class="act" data-member-admin="' + spaceId + ':' + m.user_id + '">Сделать админом</button>' +
         '<button class="act" data-member-kick="' + spaceId + ':' + m.user_id + '">Исключить</button>' +
-        '<button class="act" data-member-ban="' + spaceId + ':' + m.user_id + '">Навсегда</button>' : '') +
-      '</div>';
+        '<button class="act" data-member-ban="' + spaceId + ':' + m.user_id + '">Заблокировать навсегда</button></div>'
+      : '';
+    return '<div class="member-row member-row-user" data-member-row="1">' +
+      '<button class="profile-open" data-profile="' + esc(p.username || '') + '">' + avatarMarkup(p, 'sm') + '<span class="member-identity"><b>' + esc(p.display_name || '—') + '</b><span class="sub">@' + esc(p.username || '—') + '</span></span></button>' +
+      '<div class="member-meta"><span class="badge gray">' + ({ owner: 'владелец', admin: 'админ', member: 'участник' }[m.role] || m.role) + '</span>' +
+      (m.banned_forever ? '<span class="badge gray">заблокирован</span>' : '') +
+      (actions ? '<button class="member-more" type="button" aria-label="Действия с участником" title="Действия">⋯</button>' : '') +
+      '</div>' + actions + '</div>';
   }).join('') || '<div class="sub">Пока никого.</div>';
 }
 
@@ -1407,6 +1412,66 @@ $$('[data-staff]').forEach(function (btn) {
       }
     } catch (e) { fail(e.message || e); }
   };
+});
+
+/* Действия с участником открываются долгим нажатием на строку.
+   Кнопка ⋯ оставлена как альтернативный способ для мыши и клавиатуры. */
+var memberPressTimer = null, memberLongPressRow = null;
+document.addEventListener('pointerdown', function (e) {
+  var row = e.target.closest('.member-row-user[data-member-row]');
+  if (!row || e.target.closest('.member-actions,.member-more')) return;
+  if (memberPressTimer) clearTimeout(memberPressTimer);
+  memberLongPressRow = row;
+  memberPressTimer = setTimeout(function () {
+    var panel = $('.member-actions', row);
+    if (panel) {
+      $('.member-actions').forEach(function (p) { p.hidden = true; });
+      panel.hidden = false;
+      row.classList.add('member-actions-open');
+      row.dataset.longPressed = '1';
+      if (navigator.vibrate) navigator.vibrate(25);
+    }
+    memberPressTimer = null;
+  }, 550);
+});
+['pointerup','pointercancel','pointerleave'].forEach(function (name) {
+  document.addEventListener(name, function () {
+    if (memberPressTimer) clearTimeout(memberPressTimer);
+    memberPressTimer = null;
+  });
+});
+document.addEventListener('click', function (e) {
+  var more = e.target.closest('.member-more');
+  if (more) {
+    var row = more.closest('.member-row-user');
+    var panel = row && $('.member-actions', row);
+    if (panel) {
+      var opening = panel.hidden;
+      $('.member-actions').forEach(function (p) { p.hidden = true; });
+      $('.member-row-user').forEach(function (r) { r.classList.remove('member-actions-open'); });
+      panel.hidden = !opening;
+      row.classList.toggle('member-actions-open', opening);
+    }
+    e.preventDefault();
+    return;
+  }
+  var pressed = e.target.closest('.member-row-user[data-long-pressed="1"]');
+  if (pressed && !e.target.closest('.member-actions')) {
+    delete pressed.dataset.longPressed;
+    e.preventDefault();
+    e.stopPropagation();
+  }
+}, true);
+document.addEventListener('contextmenu', function (e) {
+  var row = e.target.closest('.member-row-user');
+  if (!row || e.target.closest('.member-actions')) return;
+  var panel = $('.member-actions', row);
+  if (panel) {
+    e.preventDefault();
+    $('.member-actions').forEach(function (p) { p.hidden = true; });
+    panel.hidden = false;
+    row.classList.add('member-actions-open');
+  }
 });
 
 /* ================= ОБРАБОТЧИК КЛИКОВ ================= */
