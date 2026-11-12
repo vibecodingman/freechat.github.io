@@ -7,7 +7,8 @@
 'use strict';
 
 var CFG = window.CONFIG || {};
-var MAX = CFG.MAX_FILE_BYTES || (100 * 1024 * 1024);
+/* Единый лимит вложений, не выше 50 МиБ. */
+var MAX = Math.min(Number(CFG.MAX_FILE_BYTES) || (50 * 1024 * 1024), 50 * 1024 * 1024);
 
 /* --- видимые ошибки: консоль открывать не обязательно --- */
 function reportError(msg) {
@@ -43,7 +44,7 @@ var sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
 });
 
-var ME = null, STAGED = [], FEED = [], SIGNED = {}, AVATAR_URLS = {}, SPACES = [], SPACE_SEARCH_RESULTS = [], SPACE_MY_ROLES = {}, SPACE_PENDING = {}, SPACE_SEARCH_TIMER = null, CONVS = [];
+var ME = null, STAGED = [], FEED = [], SIGNED = {}, SIGNED_EXPIRES = {}, AVATAR_URLS = {}, AVATAR_URL_EXPIRES = {}, SPACES = [], SPACE_SEARCH_RESULTS = [], SPACE_MY_ROLES = {}, SPACE_PENDING = {}, SPACE_SEARCH_TIMER = null, CONVS = [];
 var CHAT_STAGED = [], CHAT_SENDING = false;
 var CHAT_RECORDER = null, CHAT_RECORD_STREAM = null, CHAT_RECORD_PARTS = [], CHAT_RECORD_TIMER = null;
 var CHAT_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
@@ -392,7 +393,7 @@ function addStaged(files) {
   if (!ME) return toast('Сначала войдите в аккаунт');
   Array.prototype.forEach.call(files, function (f) {
     if ((f.type || '').indexOf('video/') === 0) return toast('Видео прикреплять нельзя');
-    if (f.size > MAX) return toast('Файл больше 100 МБ: ' + f.name);
+    if (f.size > MAX) return toast('Файл больше допустимого лимита (' + sizeF(MAX) + '): ' + f.name);
     STAGED.push(f);
   });
   renderStaged();
@@ -429,12 +430,13 @@ async function uploadStaged() {
 
 async function signPaths(items) {
   var paths = [];
-  items.forEach(function (p) {
-    (p.post_attachments || []).forEach(function (a) { if (!SIGNED[a.path]) paths.push(a.path); });
-  });
-  if (!paths.length) return;
+  items.forEach(function (p) { (p.post_attachments || []).forEach(function (a) {
+    if (a.path && (!SIGNED[a.path] || !SIGNED_EXPIRES[a.path] || SIGNED_EXPIRES[a.path] < Date.now() + 300000)) paths.push(a.path);
+  }); });
+  paths = Array.from(new Set(paths)); if (!paths.length) return;
   var r = await sb.storage.from('attachments').createSignedUrls(paths, 3600);
-  (r.data || []).forEach(function (s) { if (s && s.signedUrl) SIGNED[s.path] = s.signedUrl; });
+  if (r.error) throw new Error('Не удалось обновить ссылки на вложения: ' + r.error.message);
+  (r.data || []).forEach(function (s) { if (s && s.signedUrl && s.path) { SIGNED[s.path] = s.signedUrl; SIGNED_EXPIRES[s.path] = Date.now() + 3300000; } });
 }
 
 /* ================= ПОСТЫ ================= */
@@ -903,6 +905,8 @@ function renderConvList() {
 }
 
 function showMobileChatList() {
+  clearInterval(poll);
+  poll = null;
   $('#pane-chats').classList.remove('chat-selected');
 }
 function renderChatHead() {
@@ -919,25 +923,26 @@ function renderChatHead() {
 async function openConv(id) {
   CURRENT_CONV = CONVS.filter(function (c) { return c.id === id; })[0] || null;
   if (!CURRENT_CONV) return;
-  renderConvList();
-  renderChatHead();
-  $('#pane-chats').classList.add('chat-selected');
+  clearInterval(poll); poll = null;
+  renderConvList(); renderChatHead(); $('#pane-chats').classList.add('chat-selected');
   await loadMessages();
-  await markRead('conversation', id);
-  CONV_UNREAD[id] = 0;
-  renderConvList();
-  clearInterval(poll);
-  poll = setInterval(loadMessages, 7000);
+  if (!CURRENT_CONV || CURRENT_CONV.id !== id) return;
+  await markRead('conversation', id); CONV_UNREAD[id] = 0; renderConvList();
+  poll = setInterval(function () { if (CURRENT_CONV && CURRENT_CONV.id === id) loadMessages(); }, 7000);
 }
 
 async function loadMessages() {
   if (!CURRENT_CONV) return;
+  var conversationId = CURRENT_CONV.id;
   var r = await sb.from('messages')
     .select('id,body,attachments,from_support,sender_id,created_at,profiles(display_name)')
-    .eq('conversation_id', CURRENT_CONV.id).order('created_at').limit(300);
-  if (r.error) { $('#messages').innerHTML = '<div class="sub">' + esc(r.error.message) + '</div>'; return; }
-  await signMessagePaths(r.data || []);
-  var messageIds = (r.data || []).map(function (m) { return m.id; });
+    .eq('conversation_id', conversationId).order('created_at', { ascending: false }).limit(300);
+  if (r.error) { if (CURRENT_CONV && CURRENT_CONV.id === conversationId) $('#messages').innerHTML = '<div class="sub">' + esc(r.error.message) + '</div>'; return; }
+  var messageRows = (r.data || []).reverse();
+  if (!CURRENT_CONV || CURRENT_CONV.id !== conversationId) return;
+  await signMessagePaths(messageRows);
+  if (!CURRENT_CONV || CURRENT_CONV.id !== conversationId) return;
+  var messageIds = messageRows.map(function (m) { return m.id; });
   var reactionMap = {};
   if (messageIds.length) {
     var rx = await sb.from('message_reactions').select('message_id,user_id,emoji').in('message_id', messageIds);
@@ -951,7 +956,7 @@ async function loadMessages() {
   }
   var box = $('#messages');
   var quickReactions = CHAT_REACTIONS.slice(0, 5);
-  box.innerHTML = (r.data || []).map(function (m) {
+  box.innerHTML = messageRows.map(function (m) {
     var mine = m.sender_id === ME.id;
     var label = m.from_support ? 'Чат поддержки' : ((m.profiles || {}).display_name || 'Участник');
     var body = esc(m.body || '').replace(/\n/g, '<br>');
@@ -979,7 +984,7 @@ async function loadMessages() {
       (reactionHtml ? '<div class="chat-reactions">' + reactionHtml + '</div>' : '') + '</div>';
   }).join('') || '<div class="empty">Сообщений пока нет</div>';
   box.scrollTop = box.scrollHeight;
-  if (CURRENT_CONV) { await markRead('conversation', CURRENT_CONV.id); CONV_UNREAD[CURRENT_CONV.id] = 0; renderConvList(); }
+  if (CURRENT_CONV && CURRENT_CONV.id === conversationId) { await markRead('conversation', conversationId); CONV_UNREAD[conversationId] = 0; renderConvList(); }
 }
 function stopVoiceRecording() {
   if (CHAT_RECORD_TIMER) clearTimeout(CHAT_RECORD_TIMER);
@@ -1057,10 +1062,10 @@ $('#attachChatFile').onclick = function () {
 };
 $('#chatFileInput').onchange = function () {
   var files = Array.prototype.slice.call(this.files || []);
-  var maxFile = Math.min(MAX, 50 * 1024 * 1024);
+  var maxFile = MAX;
   files.forEach(function (f) {
     if (CHAT_STAGED.length >= 10) return toast('Можно прикрепить не более 10 файлов к одному сообщению');
-    if (f.size > maxFile) return toast('Файл больше допустимого лимита (50 МБ): ' + f.name);
+    if (f.size > maxFile) return toast('Файл больше допустимого лимита (' + sizeF(maxFile) + '): ' + f.name);
     CHAT_STAGED.push(f);
   });
   this.value = '';
@@ -1087,16 +1092,13 @@ async function uploadChatFiles(files) {
 }
 async function signMessagePaths(messages) {
   var paths = [];
-  (messages || []).forEach(function (m) {
-    (m.attachments || []).forEach(function (a) {
-      if (a.path && !SIGNED[a.path]) paths.push(a.path);
-    });
-  });
-  paths = Array.from(new Set(paths));
-  if (!paths.length) return;
+  (messages || []).forEach(function (m) { (m.attachments || []).forEach(function (a) {
+    if (a.path && (!SIGNED[a.path] || !SIGNED_EXPIRES[a.path] || SIGNED_EXPIRES[a.path] < Date.now() + 300000)) paths.push(a.path);
+  }); });
+  paths = Array.from(new Set(paths)); if (!paths.length) return;
   var r = await sb.storage.from('attachments').createSignedUrls(paths, 3600);
-  if (r.error) { console.warn('Не удалось получить ссылки на файлы сообщений:', r.error.message); return; }
-  (r.data || []).forEach(function (x) { if (x && x.signedUrl) SIGNED[x.path] = x.signedUrl; });
+  if (r.error) throw new Error('Не удалось обновить ссылки на вложения сообщений: ' + r.error.message);
+  (r.data || []).forEach(function (x) { if (x && x.signedUrl && x.path) { SIGNED[x.path] = x.signedUrl; SIGNED_EXPIRES[x.path] = Date.now() + 3300000; } });
 }
 function chatAttachmentHtml(a) {
   var url = a && a.path ? SIGNED[a.path] : '';
@@ -1248,12 +1250,12 @@ $('#openSupport').onclick = async function () {
 async function signAvatarPaths(profiles) {
   var paths = [];
   (profiles || []).forEach(function (p) {
-    if (p && p.avatar_url && !/^https?:\/\//i.test(p.avatar_url) && !AVATAR_URLS[p.avatar_url]) paths.push(p.avatar_url);
+    if (p && p.avatar_url && !/^https?:\/\//i.test(p.avatar_url) && (!AVATAR_URLS[p.avatar_url] || !AVATAR_URL_EXPIRES[p.avatar_url] || AVATAR_URL_EXPIRES[p.avatar_url] < Date.now() + 300000)) paths.push(p.avatar_url);
   });
-  paths = Array.from(new Set(paths));
-  if (!paths.length) return;
+  paths = Array.from(new Set(paths)); if (!paths.length) return;
   var r = await sb.storage.from('attachments').createSignedUrls(paths, 3600);
-  (r.data || []).forEach(function (x) { if (x && x.signedUrl) AVATAR_URLS[x.path] = x.signedUrl; });
+  if (r.error) throw new Error('Не удалось обновить ссылки на аватары: ' + r.error.message);
+  (r.data || []).forEach(function (x) { if (x && x.signedUrl && x.path) { AVATAR_URLS[x.path] = x.signedUrl; AVATAR_URL_EXPIRES[x.path] = Date.now() + 3300000; } });
 }
 function avatarMarkup(p, extra) {
   p = p || {};
@@ -1552,20 +1554,29 @@ document.addEventListener('click', async function (e) {
 
   if (d.req) {
     var q = d.req.split(':');
-    await sb.from('join_requests').update({ status: q[1] }).eq('id', q[0]);
-    if (q[1] === 'approved' && CURRENT_SPACE) {
-      await sb.from('space_members').insert({ space_id: CURRENT_SPACE.id, user_id: q[2], role: 'member' });
+    var reqSpaceId = CURRENT_SPACE && CURRENT_SPACE.id;
+    if (!reqSpaceId) return fail('Откройте канал заново и повторите действие.');
+    var reqUpdate = await sb.from('join_requests').update({ status: q[1] }).eq('id', q[0]).eq('space_id', reqSpaceId);
+    if (reqUpdate.error) return fail('Не удалось обработать заявку: ' + reqUpdate.error.message);
+    if (q[1] === 'approved') {
+      var addMember = await sb.from('space_members').insert({ space_id: reqSpaceId, user_id: q[2], role: 'member' });
+      if (addMember.error) return fail('Заявка одобрена, но добавить участника не удалось: ' + addMember.error.message);
     }
-    if (CURRENT_SPACE) { loadRequests(CURRENT_SPACE.id); loadMembers(CURRENT_SPACE.id, true); }
-    return;
+    toast(q[1] === 'approved' ? 'Заявка одобрена' : 'Заявка отклонена');
+    await loadRequests(reqSpaceId); await loadMembers(reqSpaceId, true); return;
   }
   if (d.memberAdmin || d.memberKick || d.memberBan) {
     var raw = (d.memberAdmin || d.memberKick || d.memberBan).split(':');
-    var sid = raw[0], uid = raw[1];
-    if (d.memberAdmin) await sb.from('space_members').update({ role: 'admin' }).match({ space_id: sid, user_id: uid });
-    if (d.memberKick)  await sb.from('space_members').delete().match({ space_id: sid, user_id: uid });
-    if (d.memberBan)   await sb.from('space_members').update({ banned_forever: true }).match({ space_id: sid, user_id: uid });
-    loadMembers(sid, true); return;
+    var sid = raw[0], uid = raw[1], actionResult;
+    if (!sid || !uid) return fail('Не удалось определить участника. Обновите страницу.');
+    if (d.memberKick && !confirm('Удалить участника из канала?')) return;
+    if (d.memberBan && !confirm('Заблокировать участника навсегда?')) return;
+    if (d.memberAdmin) actionResult = await sb.from('space_members').update({ role: 'admin' }).match({ space_id: sid, user_id: uid });
+    if (d.memberKick) actionResult = await sb.from('space_members').delete().match({ space_id: sid, user_id: uid });
+    if (d.memberBan) actionResult = await sb.from('space_members').update({ banned_forever: true }).match({ space_id: sid, user_id: uid });
+    if (actionResult && actionResult.error) return fail('Не удалось выполнить действие: ' + actionResult.error.message);
+    toast(d.memberAdmin ? 'Пользователь назначен администратором' : d.memberKick ? 'Участник удалён из канала' : 'Участник заблокирован');
+    await loadMembers(sid, true); return;
   }
 });
 
