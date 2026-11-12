@@ -77,8 +77,10 @@
         <div><h1>Каналы и сообщества</h1><p>Подписывайтесь на каналы или вступайте в сообщества</p></div>
         <button class="btn primary" id="openSpaceModal">Создать</button>
       </div>
-      <div class="row between mb wrap gap">
-        <button class="btn ghost" id="showAllSpaces">Обновить список</button>
+      <div class="space-search-card">
+        <label class="space-search-label" for="spaceSearchInput">Поиск каналов и сообществ</label>
+        <div class="space-search-wrap"><span aria-hidden="true">⌕</span><input id="spaceSearchInput" type="search" placeholder="Название или ключевое слово…" autocomplete="off"></div>
+        <p class="sub">В списке ниже — ваши подписки. Через поиск можно найти новые каналы и сообщества.</p>
       </div>
       <div id="spaceView"></div>
     </div>
@@ -220,6 +222,6 @@
 
 <div id="toast" class="toast"></div>
 <script src="config.js"></script>
-<script src="app.js?v=20261112-fix-staff-panel-visibility-2"></script>
+<script src="app.js?v=20261112-spaces-search-composer"></script>
 </body>
 </html>
