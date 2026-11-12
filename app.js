@@ -1418,7 +1418,7 @@ document.addEventListener('click', async function (e) {
     toast(dr.error ? dr.error.message : dr.data);
     CURRENT_SPACE = null; loadSpaces(); return;
   }
-  if (d.chatBack) { showMobileChatList(); return; }
+  if (t.hasAttribute('data-chat-back')) { showMobileChatList(); return; }
   if (d.conv) return openConv(d.conv);
   if (d.verdict) {
     var parts = d.verdict.split(':');
