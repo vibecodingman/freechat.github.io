@@ -834,18 +834,33 @@ async function loadConversations() {
 function renderConvList() {
   $('#convList').innerHTML = CONVS.length ? CONVS.map(function (c) {
     return '<div class="conv' + (CURRENT_CONV && CURRENT_CONV.id === c.id ? ' on' : '') + '" data-conv="' + c.id + '">' +
-      '<button class="profile-open" data-profile="' + esc((c._profile || {}).username || '') + '">' +
+      '<div class="conv-content">' +
       (c.is_support ? '<span class="av sm">?</span>' : avatarMarkup(c._profile || {}, 'sm')) +
-      '<span class="grow"><span style="font-size:13px;font-weight:650;display:block">' + esc(c.title) + '</span>' +
-      '<span class="sub">' + esc(c.sub) + '</span></span>' + (CONV_UNREAD[c.id] ? '<span class="unread-badge">' + nf(CONV_UNREAD[c.id]) + '</span>' : '') + '</button></div>';
+      '<span class="grow"><span class="conv-title">' + esc(c.title) + '</span>' +
+      '<span class="sub">' + esc(c.sub) + '</span></span>' + (CONV_UNREAD[c.id] ? '<span class="unread-badge">' + nf(CONV_UNREAD[c.id]) + '</span>' : '') + '</div></div>';
   }).join('') : '<div class="sub">Диалогов пока нет.</div>';
+}
+
+function showMobileChatList() {
+  $('#pane-chats').classList.remove('chat-selected');
+}
+function renderChatHead() {
+  var c = CURRENT_CONV;
+  if (!c) { $('#chatHead').textContent = 'Выберите чат'; return; }
+  var p = c._profile || {};
+  var profile = !c.is_support && p.username
+    ? '<button type="button" class="chat-head-profile" data-profile="' + esc(p.username) + '">' +
+        avatarMarkup(p, 'sm') + '<span>' + esc(c.title) + '</span><span class="sub">@' + esc(p.username) + '</span></button>'
+    : '<div class="chat-head-title">' + esc(c.title) + '</div>';
+  $('#chatHead').innerHTML = '<button type="button" class="chat-back-mobile" data-chat-back aria-label="Назад к списку чатов">‹</button>' + profile;
 }
 
 async function openConv(id) {
   CURRENT_CONV = CONVS.filter(function (c) { return c.id === id; })[0] || null;
   if (!CURRENT_CONV) return;
   renderConvList();
-  $('#chatHead').textContent = CURRENT_CONV.title;
+  renderChatHead();
+  $('#pane-chats').classList.add('chat-selected');
   await loadMessages();
   await markRead('conversation', id);
   CONV_UNREAD[id] = 0;
@@ -1346,7 +1361,7 @@ $$('[data-staff]').forEach(function (btn) {
 
 /* ================= ОБРАБОТЧИК КЛИКОВ ================= */
 document.addEventListener('click', async function (e) {
-  var t = e.target.closest('[data-like],[data-cmt],[data-report],[data-del],[data-open-space],[data-back-spaces],[data-join],[data-invite],[data-del-space],[data-conv],[data-verdict],[data-cancel-del],[data-open-support],[data-req],[data-member-admin],[data-member-kick],[data-member-ban],[data-comment-send]');
+  var t = e.target.closest('[data-like],[data-cmt],[data-report],[data-del],[data-open-space],[data-back-spaces],[data-join],[data-invite],[data-del-space],[data-conv],[data-verdict],[data-cancel-del],[data-open-support],[data-req],[data-member-admin],[data-member-kick],[data-member-ban],[data-comment-send],[data-chat-back]');
   if (!t) return;
   var d = t.dataset;
 
@@ -1403,6 +1418,7 @@ document.addEventListener('click', async function (e) {
     toast(dr.error ? dr.error.message : dr.data);
     CURRENT_SPACE = null; loadSpaces(); return;
   }
+  if (d.chatBack) { showMobileChatList(); return; }
   if (d.conv) return openConv(d.conv);
   if (d.verdict) {
     var parts = d.verdict.split(':');

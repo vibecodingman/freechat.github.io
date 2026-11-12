@@ -386,3 +386,30 @@ textarea{resize:vertical;min-height:64px}
     flex-basis: 34px;
   }
 }
+
+
+/* --- Mobile chat navigation: list first, selected conversation second --- */
+.conv-content{display:flex;align-items:center;gap:10px;min-width:0;width:100%}
+.conv-title{font-size:13px;font-weight:650;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-head{display:flex;align-items:center;gap:10px;min-width:0}
+.chat-head-profile{display:flex;align-items:center;gap:9px;min-width:0;border:0;background:transparent;padding:0;color:inherit;font:inherit;font-weight:700;cursor:pointer;text-align:left}
+.chat-head-profile .av{flex:0 0 30px;width:30px;height:30px}
+.chat-head-profile .sub{font-weight:400}
+.chat-head-title{font-weight:700}
+.chat-back-mobile{display:none;border:0;background:#f1f3f7;border-radius:10px;width:36px;height:36px;flex:0 0 36px;font-size:26px;line-height:1;cursor:pointer;color:var(--ink)}
+@media(max-width:760px){
+  #pane-chats:not(.chat-selected) .chat-layout{display:block;height:auto;min-height:calc(100dvh - 205px)}
+  #pane-chats:not(.chat-selected) .chat-list{width:100%;min-height:calc(100dvh - 225px);border:0;overflow:visible;padding:10px 12px}
+  #pane-chats:not(.chat-selected) .chat-list .row{display:flex;flex-direction:row;align-items:center;flex-wrap:nowrap;gap:8px;margin-bottom:12px}
+  #pane-chats:not(.chat-selected) .chat-list .row input{flex:1 1 auto;min-width:0}
+  #pane-chats:not(.chat-selected) .chat-list .row button{width:auto;flex:0 0 auto;white-space:nowrap;padding:9px 10px}
+  #pane-chats:not(.chat-selected) .conv{padding:10px 8px;margin-bottom:3px}
+  #pane-chats:not(.chat-selected) .chat-window{display:none}
+  #pane-chats.chat-selected .chat-layout{display:flex;flex-direction:column;height:calc(100dvh - 205px);min-height:calc(100dvh - 205px)}
+  #pane-chats.chat-selected .chat-list{display:none}
+  #pane-chats.chat-selected .chat-window{display:flex;flex:1;min-height:0;width:100%}
+  #pane-chats.chat-selected .chat-back-mobile{display:inline-flex;align-items:center;justify-content:center}
+  #pane-chats.chat-selected .chat-head{padding:9px 10px}
+  #pane-chats.chat-selected .chat-head-profile{flex-wrap:wrap;gap:5px 8px}
+  #pane-chats.chat-selected .chat-head-profile .sub{font-size:11px}
+}
