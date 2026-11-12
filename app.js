@@ -61,7 +61,7 @@ var SPACE_UNREAD = {}, CONV_UNREAD = {}, LAST_DM_CHECK = null, notifPoll = null;
 
 var isStaff = function () { return !!(ME && (ME.is_owner || ME.is_coowner)); };
 function syncStaffUI() {
-  $( '.staff-only' ).forEach(function (el) { el.hidden = !isStaff(); });
+  Array.prototype.forEach.call(document.querySelectorAll('.staff-only'), function (el) { el.hidden = !isStaff(); });
 }
 var isMuted = function () {
   return !!(ME && (ME.muted_forever || (ME.muted_until && new Date(ME.muted_until) > new Date())));
@@ -197,7 +197,7 @@ function showTab(name) {
     toast('У вас нет доступа к панели модерации');
     name = 'feed';
   }
-  $( '.pane' ).forEach(function (p) { p.classList.remove('active'); });
+  Array.prototype.forEach.call(document.querySelectorAll('.pane'), function (p) { p.classList.remove('active'); });
   var pane = document.getElementById('pane-' + name);
   if (pane) pane.classList.add('active');
   $$('[data-tab]').forEach(function (b) { b.classList.toggle('active', b.dataset.tab === name); });
