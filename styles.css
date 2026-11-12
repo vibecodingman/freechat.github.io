@@ -69,6 +69,24 @@ textarea{resize:vertical;min-height:64px}
 .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .sub{font-size:12px;color:var(--muted)}
 .member-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px;flex-wrap:wrap}
+/* Участники: аватар фиксированного квадрата, действия — отдельным меню */
+.member-row-user{display:flex;align-items:center;gap:10px;min-width:0}
+.member-row-user .profile-open{flex:1 1 190px;min-width:0;max-width:100%}
+.member-row-user .profile-open .av{width:38px;height:38px;min-width:38px;max-width:38px;aspect-ratio:1;flex:0 0 38px;border-radius:50%;object-fit:cover}
+.member-identity{display:flex;flex-direction:column;min-width:0;overflow:hidden;line-height:1.35}
+.member-identity b,.member-identity .sub{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.member-meta{display:flex;align-items:center;gap:7px;flex:0 0 auto;margin-left:auto}
+.member-more{width:34px;height:34px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);font-size:22px;line-height:1;cursor:pointer}
+.member-actions{flex:1 0 100%;display:flex;gap:8px;flex-wrap:wrap;padding:8px 0 4px 48px}
+.member-actions[hidden]{display:none!important}
+.member-row-user.member-actions-open{background:var(--soft);border-radius:12px;padding:9px 10px}
+@media(max-width:560px){
+  .member-row-user{gap:8px}
+  .member-row-user .profile-open{flex-basis:150px}
+  .member-meta{gap:5px}
+  .member-actions{padding-left:0}
+  .member-actions .act{flex:1 1 auto;min-height:38px}
+}
 .chat-layout{display:grid;grid-template-columns:270px 1fr;padding:0;overflow:hidden}
 .chat-list{padding:14px;border-right:1px solid var(--line)}
 .chat-window{display:flex;flex-direction:column;min-height:460px;min-width:0}
