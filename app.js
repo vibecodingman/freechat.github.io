@@ -1102,7 +1102,7 @@ $('#messages').addEventListener('click', async function (e) {
   var bubbleTap = e.target.closest('[data-message-bubble]');
   if (bubbleTap && window.matchMedia && window.matchMedia('(max-width: 760px)').matches) {
     var wasOpen = bubbleTap.classList.contains('reaction-open');
-    $('#messages [data-message-bubble].reaction-open').forEach(function (item) {
+    $$('#messages [data-message-bubble].reaction-open').forEach(function (item) {
       item.classList.remove('reaction-open', 'reaction-expanded-open');
       var panel = item.querySelector('.chat-reaction-expanded');
       if (panel) panel.hidden = true;
