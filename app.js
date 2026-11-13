@@ -703,9 +703,9 @@ if ($('#spaceSearchInput')) {
 
 async function openSpace(s) {
   CURRENT_SPACE = s;
-  var localAdmin = s._myRole === 'owner' || s._myRole === 'admin';
+  var localAdmin = s._myRole === 'owner' || (s._myRole === 'admin' && !isStaff());
   var adm = localAdmin || isStaff();
-  var canPost = s.type === 'channel' ? adm : (!!s._myRole || isStaff());
+  var canPost = s.type === 'channel' ? localAdmin : (!!s._myRole || isStaff());
 
   var html = '<div class="card space-header-card"><div class="space-header-actions">' +
     '<button class="btn ghost" data-back-spaces="1">← К списку каналов</button>' +
@@ -713,7 +713,7 @@ async function openSpace(s) {
     (!s._myRole ? (s._pending
       ? '<span class="badge gray">Заявка отправлена</span>'
       : '<button class="btn primary" data-join="' + s.id + '">' + (s.privacy === 'private' ? 'Запросить доступ' : (s.type === 'channel' ? 'Подписаться' : 'Вступить')) + '</button>') : '') +
-    (adm ? '<button class="btn ghost" data-invite="' + s.id + '">Ссылка-приглашение</button>' : '') +
+    (localAdmin ? '<button class="btn ghost" data-invite="' + s.id + '">Ссылка-приглашение</button>' : '') +
     (adm ? '<button class="btn ghost" data-del-space="' + s.id + '">Удалить</button>' : '') +
     '</div></div>' +
     '<div class="space-row space-profile"><div class="space-ico">' + ini(s.name) + '</div><div class="grow">' +
@@ -738,6 +738,8 @@ async function openSpace(s) {
   // или глобальной команде проекта.
   if (adm) {
     html += '<div class="card"><h3>Участники и управление</h3><div id="memberList" class="sub">Загрузка…</div></div>';
+  }
+  if (localAdmin) {
     html += '<div class="card"><h3>Заявки на вступление</h3><div id="requestList" class="sub">Загрузка…</div></div>';
   }
   html += '<div id="spacePosts"></div>';
@@ -747,10 +749,8 @@ async function openSpace(s) {
   if ($('#spacePickPhoto')) $('#spacePickPhoto').onchange = function () { addStaged(this.files); this.value = ''; };
   if ($('#spacePickFile')) $('#spacePickFile').onchange = function () { addStaged(this.files); this.value = ''; };
   loadSpacePosts();
-  if (adm) {
-    loadMembers(s.id, true);
-    loadRequests(s.id);
-  }
+  if (adm) loadMembers(s.id, true);
+  if (localAdmin) loadRequests(s.id);
 }
 async function loadMembers(spaceId, admin) {
   var box = $('#memberList');
