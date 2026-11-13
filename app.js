@@ -613,6 +613,7 @@ async function loadSpaces() {
       rows = r.data || [];
     }
     SPACES = decorateSpaceRows(rows);
+    await signAvatarPaths(SPACES.map(function (s) { return {display_name:s.name,avatar_url:s.avatar_url}; }));
     await refreshSpaceUnreadCounts();
     SPACES.forEach(function (s) { s._unread = SPACE_UNREAD[s.id] || { posts: 0, comments: 0 }; });
 
@@ -651,6 +652,7 @@ async function searchSpaces(value) {
     var input = $('#spaceSearchInput');
     if (!input || input.value.trim() !== term) return;
     SPACE_SEARCH_RESULTS = decorateSpaceRows((r.data || []).filter(function (s) { return !s.is_archived; }));
+    await signAvatarPaths(SPACE_SEARCH_RESULTS.map(function (s) { return {display_name:s.name,avatar_url:s.avatar_url}; }));
     renderSpaceList();
   } catch (e) { fail(e.message || e); }
 }
@@ -703,6 +705,7 @@ if ($('#spaceSearchInput')) {
 
 async function openSpace(s) {
   CURRENT_SPACE = s;
+  await signAvatarPaths([{display_name:s.name,avatar_url:s.avatar_url}]);
   var localAdmin = s._myRole === 'owner' || (s._myRole === 'admin' && !isStaff());
   var adm = localAdmin || isStaff();
   var canPost = s.type === 'channel' ? localAdmin : (!!s._myRole || isStaff());
