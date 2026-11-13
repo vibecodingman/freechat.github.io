@@ -456,11 +456,17 @@ function postHtml(p) {
   var liked = (p.post_likes || []).some(function (l) { return l.user_id === ME.id; });
   var comments = p.comments || [];
 
+  var channelPost = !!(p.space_id && p._space && p._space.type === 'channel');
+  var displayName = channelPost ? p._space.name : (a.display_name || 'Без имени');
+  var displayAvatar = channelPost ? {display_name:p._space.name,avatar_url:p._space.avatar_url} : a;
+  var identityButton = channelPost
+    ? '<button class="profile-open post-author" data-open-channel="' + esc(p.space_id) + '">' + avatarMarkup(displayAvatar, '') + '<span><strong>' + esc(displayName) + '</strong></span></button>'
+    : '<button class="profile-open post-author" data-profile="' + esc(a.username || '') + '">' + avatarMarkup(displayAvatar, '') + '<span><strong>' + esc(displayName) + '</strong></span></button>';
   var html = '<article class="card post"><div class="post-head">' +
-    '<button class="profile-open post-author" data-profile="' + esc(a.username || '') + '">' + avatarMarkup(a, '') + '<span><strong>' + esc(a.display_name || 'Без имени') + '</strong></span></button><div class="who grow">' +
-    (a.is_verified ? '<span class="badge">✓</span>' : '') +
-    '<div>@' + esc(a.username || '—') + ' · ' + dateF(p.created_at) + '</div>' +
-    (p._spaceName ? '<div class="post-channel">Канал: ' + esc(p._spaceName) + '</div>' : '') + '</div>' +
+    identityButton + '<div class="who grow">' +
+    (!channelPost && a.is_verified ? '<span class="badge">✓</span>' : '') +
+    (channelPost ? '<div>Канал · ' + dateF(p.created_at) + '</div>' : '<div>@' + esc(a.username || '—') + ' · ' + dateF(p.created_at) + '</div>') +
+    '</div>' +
     '<button class="act" data-report="' + p.id + '">Жалоба</button></div>';
 
   if (p.content) html += '<div class="post-text">' + esc(p.content) + '</div>';
@@ -514,7 +520,7 @@ async function loadFeed() {
       return;
     }
 
-    var spacesResult = await sb.from('spaces').select('id,name,is_archived').in('id', ids).eq('type', 'channel');
+    var spacesResult = await sb.from('spaces').select('id,name,avatar_url,is_archived,type,description,privacy,comments_enabled,owner_id,created_at').in('id', ids).eq('type', 'channel');
     if (spacesResult.error) { fail('Не удалось проверить каналы: ' + spacesResult.error.message); return; }
     var channels = (spacesResult.data || []).filter(function (s) { return !s.is_archived; });
     if (!channels.length) {
@@ -530,12 +536,13 @@ async function loadFeed() {
       .order('created_at', { ascending: false }).limit(60);
     if (postsResult.error) { fail('Лента не загрузилась: ' + postsResult.error.message); return; }
 
-    var names = {};
-    channels.forEach(function (s) { names[s.id] = s.name; });
+    var spacesById = {};
+    channels.forEach(function (s) { spacesById[s.id] = s; });
     FEED = postsResult.data || [];
-    FEED.forEach(function (p) { p._spaceName = names[p.space_id] || 'Канал'; });
+    FEED.forEach(function (p) { p._space = spacesById[p.space_id] || null; p._spaceName = (p._space && p._space.name) || 'Канал'; });
     await signPaths(FEED);
-    await signAvatarPaths(FEED.reduce(function (a, p) { a.push(p.author || {}); (p.comments || []).forEach(function (c) { a.push(c.author || {}); }); return a; }, []));
+    var avatarItems = FEED.reduce(function (a, p) { a.push(p.author || {}); if (p._space) a.push({display_name:p._space.name,avatar_url:p._space.avatar_url}); (p.comments || []).forEach(function (c) { a.push(c.author || {}); }); return a; }, []);
+    await signAvatarPaths(avatarItems);
 
     box.innerHTML = FEED.length ? FEED.map(postHtml).join('')
       : '<div class="card empty"><h3>Новых публикаций пока нет</h3><p>Вы подписаны на ' + channels.length + ' канал(а). Когда там появятся посты, они отобразятся здесь.</p><button class="btn ghost" id="feedOpenChannels">Мои каналы</button></div>';
@@ -552,7 +559,9 @@ async function loadSpacePosts() {
   if (r.error) { box.innerHTML = '<div class="card sub">' + esc(r.error.message) + '</div>'; return; }
   var rows = r.data || [];
   await signPaths(rows);
-  await signAvatarPaths(rows.reduce(function (a, p) { a.push(p.author || {}); (p.comments || []).forEach(function (c) { a.push(c.author || {}); }); return a; }, []));
+  rows.forEach(function (p) { p._space = CURRENT_SPACE; p._spaceName = CURRENT_SPACE.name; });
+  var avatarItems = rows.reduce(function (a, p) { a.push(p.author || {}, {display_name:CURRENT_SPACE.name,avatar_url:CURRENT_SPACE.avatar_url}); (p.comments || []).forEach(function (c) { a.push(c.author || {}); }); return a; }, []);
+  await signAvatarPaths(avatarItems);
   box.innerHTML = rows.length ? rows.map(postHtml).join('') : '<div class="card sub">Публикаций пока нет.</div>';
   await markSpaceRead(CURRENT_SPACE.id);
 }
@@ -606,13 +615,14 @@ async function loadSpaces() {
     var rows = [];
     if (ids.length) {
       var r = await sb.from('spaces')
-        .select('id,type,name,description,privacy,comments_enabled,is_archived,owner_id,' +
+        .select('id,type,name,description,privacy,comments_enabled,is_archived,owner_id,avatar_url,' +
                 'owner:profiles!spaces_owner_id_fkey(display_name,username),members:space_members(count)')
         .in('id', ids).eq('type', 'channel').order('created_at', { ascending: false });
       if (r.error) { fail('Каналы не загрузились: ' + r.error.message); return; }
       rows = r.data || [];
     }
     SPACES = decorateSpaceRows(rows);
+    await signAvatarPaths(SPACES.map(function (s) { return {display_name:s.name,avatar_url:s.avatar_url}; }));
     await refreshSpaceUnreadCounts();
     SPACES.forEach(function (s) { s._unread = SPACE_UNREAD[s.id] || { posts: 0, comments: 0 }; });
 
@@ -643,7 +653,7 @@ async function searchSpaces(value) {
   if (!safe) { SPACE_SEARCH_RESULTS = []; renderSpaceList(); return; }
   try {
     var r = await sb.from('spaces')
-      .select('id,type,name,description,privacy,comments_enabled,is_archived,owner_id,' +
+      .select('id,type,name,description,privacy,comments_enabled,is_archived,owner_id,avatar_url,' +
               'owner:profiles!spaces_owner_id_fkey(display_name,username),members:space_members(count)')
       .or('name.ilike.%' + safe + '%,description.ilike.%' + safe + '%')
       .order('created_at', { ascending: false }).limit(60);
@@ -651,6 +661,7 @@ async function searchSpaces(value) {
     var input = $('#spaceSearchInput');
     if (!input || input.value.trim() !== term) return;
     SPACE_SEARCH_RESULTS = decorateSpaceRows((r.data || []).filter(function (s) { return !s.is_archived; }));
+    await signAvatarPaths(SPACE_SEARCH_RESULTS.map(function (s) { return {display_name:s.name,avatar_url:s.avatar_url}; }));
     renderSpaceList();
   } catch (e) { fail(e.message || e); }
 }
@@ -664,7 +675,7 @@ function spaceCardHtml(s) {
       : '<button class="btn primary" data-join="' + s.id + '">' +
         (s.privacy === 'private' ? 'Запросить доступ' : (s.type === 'channel' ? 'Подписаться' : 'Вступить')) +
         '</button>';
-  return '<div class="card space-card"><div class="space-row"><div class="space-ico">' + ini(s.name) + '</div>' +
+  return '<div class="card space-card"><div class="space-row"><div class="space-ico">' + (s.avatar_url ? avatarMarkup({display_name:s.name,avatar_url:s.avatar_url}, 'space-avatar') : ini(s.name)) + '</div>' +
     '<div class="grow"><div><b>' + esc(s.name) + '</b> <span class="badge gray">' + (s.type === 'channel' ? 'Канал' : 'Сообщество') + '</span>' +
     ' <span class="badge gray">' + (s.privacy === 'private' ? 'Закрытое' : 'Открытое') + '</span>' +
     (s.is_archived ? ' <span class="badge gray">В архиве</span>' : '') + '</div>' +
@@ -701,8 +712,31 @@ if ($('#spaceSearchInput')) {
   });
 }
 
+async function openSpaceById(spaceId) {
+  if (CURRENT_SPACE && CURRENT_SPACE.id === spaceId) return openSpace(CURRENT_SPACE);
+  var r = await sb.from('spaces').select('id,type,name,description,privacy,comments_enabled,is_archived,owner_id,avatar_url,owner:profiles!spaces_owner_id_fkey(display_name,username),members:space_members(count)').eq('id', spaceId).maybeSingle();
+  if (r.error || !r.data) return toast('Канал недоступен или удалён');
+  var role = SPACE_MY_ROLES[spaceId] || null;
+  if (!role) { var m = await sb.from('space_members').select('role').eq('space_id', spaceId).eq('user_id', ME.id).maybeSingle(); if (!m.error && m.data) role = m.data.role; }
+  var s = decorateSpaceRows([r.data])[0]; s._myRole = role;
+  showTab('spaces'); await openSpace(s);
+}
+
+async function uploadSpaceAvatar(space, file) {
+  if (!space || !space.id || !file || !/^image\//i.test(file.type || '')) return toast('Выберите файл изображения');
+  if (file.size > 5 * 1024 * 1024) return toast('Аватар канала должен быть не больше 5 МБ');
+  var path = ME.id + '/spaces/' + space.id + '/avatar-' + Date.now() + '-' + file.name.replace(/[^\w.-]+/g, '_').slice(-40);
+  var up = await sb.storage.from('attachments').upload(path, file, {contentType:file.type,upsert:false});
+  if (up.error) return fail('Не удалось загрузить аватар: ' + up.error.message);
+  var saved = await sb.from('spaces').update({avatar_url:path}).eq('id',space.id);
+  if (saved.error) { await sb.storage.from('attachments').remove([path]); return fail('Не удалось сохранить аватар. Сначала выполните channel-identity-migration.sql: ' + saved.error.message); }
+  space.avatar_url = path; delete AVATAR_URLS[path]; delete AVATAR_URL_EXPIRES[path];
+  toast('Аватар канала обновлён'); await openSpace(space);
+}
+
 async function openSpace(s) {
   CURRENT_SPACE = s;
+  await signAvatarPaths([{display_name:s.name,avatar_url:s.avatar_url}]);
   var localAdmin = s._myRole === 'owner' || (s._myRole === 'admin' && !isStaff());
   var adm = localAdmin || isStaff();
   var canPost = s.type === 'channel' ? localAdmin : (!!s._myRole || isStaff());
@@ -713,10 +747,10 @@ async function openSpace(s) {
     (!s._myRole ? (s._pending
       ? '<span class="badge gray">Заявка отправлена</span>'
       : '<button class="btn primary" data-join="' + s.id + '">' + (s.privacy === 'private' ? 'Запросить доступ' : (s.type === 'channel' ? 'Подписаться' : 'Вступить')) + '</button>') : '') +
-    (localAdmin ? '<button class="btn ghost" data-invite="' + s.id + '">Ссылка-приглашение</button>' : '') +
+    (localAdmin ? '<label class="btn ghost space-avatar-change">Аватар канала<input type="file" id="spaceAvatarPick" accept="image/*" hidden></label><button class="btn ghost" data-invite="' + s.id + '">Ссылка-приглашение</button>' : '') +
     (adm ? '<button class="btn ghost" data-del-space="' + s.id + '">Удалить</button>' : '') +
     '</div></div>' +
-    '<div class="space-row space-profile"><div class="space-ico">' + ini(s.name) + '</div><div class="grow">' +
+    '<div class="space-row space-profile"><div class="space-ico">' + (s.avatar_url ? avatarMarkup({display_name:s.name,avatar_url:s.avatar_url}, 'space-avatar') : ini(s.name)) + '</div><div class="grow">' +
     '<div class="space-title-line"><b>' + esc(s.name) + '</b> <span class="badge gray">' + (s.type === 'channel' ? 'Канал' : 'Сообщество') + '</span></div>' +
     '<div class="sub">' + nf(s._count) + ' участников · ' + (s.comments_enabled ? 'комментарии включены' : 'комментарии отключены') + '</div>' +
     (s.description ? '<div class="space-description">' + esc(s.description) + '</div>' : '') + '</div></div></div>';
@@ -748,6 +782,7 @@ async function openSpace(s) {
   if ($('#spacePublish')) $('#spacePublish').onclick = function () { publishPost(s.id); };
   if ($('#spacePickPhoto')) $('#spacePickPhoto').onchange = function () { addStaged(this.files); this.value = ''; };
   if ($('#spacePickFile')) $('#spacePickFile').onchange = function () { addStaged(this.files); this.value = ''; };
+  if ($('#spaceAvatarPick')) $('#spaceAvatarPick').onchange = async function () { var f = this.files && this.files[0]; this.value = ''; if (f) await uploadSpaceAvatar(s, f); };
   loadSpacePosts();
   if (adm) loadMembers(s.id, true);
   if (localAdmin) loadRequests(s.id);
@@ -820,6 +855,8 @@ $('#createSpace').onclick = async function () {
     // создателя в space_members: SELECT-политика может скрывать пространство
     // от пользователя, который ещё не стал его участником.
     var spaceId = makeUuid();
+    var avatarFile = $('#spAvatar') && $('#spAvatar').files ? $('#spAvatar').files[0] : null;
+    if (avatarFile && (!/^image\//i.test(avatarFile.type || '') || avatarFile.size > 5 * 1024 * 1024)) return toast('Аватар должен быть изображением до 5 МБ');
     var r = await sb.from('spaces').insert({
       id: spaceId, owner_id: ME.id, type: $('#spType').value, name: name,
       description: $('#spDesc').value.trim(), privacy: privacy,
@@ -829,9 +866,15 @@ $('#createSpace').onclick = async function () {
 
     var m = await sb.from('space_members').insert({ space_id: spaceId, user_id: ME.id, role: 'owner' });
     if (m.error) return fail('Пространство создано, но не удалось добавить вас в участники: ' + m.error.message);
+    if (avatarFile && $('#spType').value === 'channel') {
+      var avatarPath = ME.id + '/spaces/' + spaceId + '/avatar-' + Date.now() + '-' + avatarFile.name.replace(/[^\w.-]+/g, '_').slice(-40);
+      var avatarUpload = await sb.storage.from('attachments').upload(avatarPath, avatarFile, {contentType:avatarFile.type,upsert:false});
+      if (avatarUpload.error) toast('Канал создан, но аватар не загрузился: ' + avatarUpload.error.message);
+      else { var avatarSave = await sb.from('spaces').update({avatar_url:avatarPath}).eq('id',spaceId); if (avatarSave.error) toast('Канал создан, но аватар не сохранился. Выполните channel-identity-migration.sql.'); }
+    }
 
     closeSpaceModal();
-    $('#spName').value = ''; $('#spDesc').value = '';
+    $('#spName').value = ''; $('#spDesc').value = ''; if ($('#spAvatar')) $('#spAvatar').value = '';
     toast('Пространство «' + name + '» создано');
     CURRENT_SPACE = null;
     showTab('spaces');
@@ -1487,7 +1530,7 @@ document.addEventListener('contextmenu', function (e) {
 
 /* ================= ОБРАБОТЧИК КЛИКОВ ================= */
 document.addEventListener('click', async function (e) {
-  var t = e.target.closest('[data-like],[data-cmt],[data-report],[data-del],[data-open-space],[data-back-spaces],[data-join],[data-invite],[data-del-space],[data-conv],[data-verdict],[data-cancel-del],[data-open-support],[data-req],[data-member-admin],[data-member-kick],[data-member-ban],[data-comment-send],[data-chat-back]');
+  var t = e.target.closest('[data-like],[data-cmt],[data-report],[data-del],[data-open-space],[data-open-channel],[data-back-spaces],[data-join],[data-invite],[data-del-space],[data-conv],[data-verdict],[data-cancel-del],[data-open-support],[data-req],[data-member-admin],[data-member-kick],[data-member-ban],[data-comment-send],[data-chat-back]');
   if (!t) return;
   var d = t.dataset;
 
@@ -1518,6 +1561,7 @@ document.addEventListener('click', async function (e) {
     return;
   }
   if (d.openSpace) { var s = SPACES.concat(SPACE_SEARCH_RESULTS).filter(function (x) { return x.id === d.openSpace; })[0]; if (s) openSpace(s); return; }
+  if (d.openChannel) { await openSpaceById(d.openChannel); return; }
   if (d.backSpaces) { renderSpaceList(); return; }
   if (d.join) {
     var sp = SPACES.concat(SPACE_SEARCH_RESULTS).filter(function (x) { return x.id === d.join; })[0] || {};
