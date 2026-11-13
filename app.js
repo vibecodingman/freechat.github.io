@@ -703,7 +703,8 @@ if ($('#spaceSearchInput')) {
 
 async function openSpace(s) {
   CURRENT_SPACE = s;
-  var adm = s._myRole === 'owner' || s._myRole === 'admin' || isStaff();
+  var localAdmin = s._myRole === 'owner' || s._myRole === 'admin';
+  var adm = localAdmin || isStaff();
   var canPost = s.type === 'channel' ? adm : (!!s._myRole || isStaff());
 
   var html = '<div class="card space-header-card"><div class="space-header-actions">' +
@@ -761,9 +762,11 @@ async function loadMembers(spaceId, admin) {
   await signAvatarPaths((r.data || []).map(function (m) { return m.profiles || {}; }));
   box.innerHTML = (r.data || []).map(function (m) {
     var p = m.profiles || {};
+    var localAdmin = CURRENT_SPACE && CURRENT_SPACE.id === spaceId &&
+      (CURRENT_SPACE._myRole === 'owner' || CURRENT_SPACE._myRole === 'admin');
     var actions = admin && m.role !== 'owner'
       ? '<div class="member-actions" hidden>' +
-        '<button class="act" data-member-admin="' + spaceId + ':' + m.user_id + '">Назначить администратором</button>' +
+        (localAdmin ? '<button class="act" data-member-admin="' + spaceId + ':' + m.user_id + '">Назначить администратором</button>' : '') +
         '<button class="act" data-member-kick="' + spaceId + ':' + m.user_id + '">Удалить из канала</button>' +
         '<button class="act" data-member-ban="' + spaceId + ':' + m.user_id + '">Заблокировать навсегда</button></div>'
       : '';
@@ -1569,6 +1572,10 @@ document.addEventListener('click', async function (e) {
     var raw = (d.memberAdmin || d.memberKick || d.memberBan).split(':');
     var sid = raw[0], uid = raw[1], actionResult;
     if (!sid || !uid) return fail('Не удалось определить участника. Обновите страницу.');
+    if (d.memberAdmin && !(CURRENT_SPACE && CURRENT_SPACE.id === sid &&
+        (CURRENT_SPACE._myRole === 'owner' || CURRENT_SPACE._myRole === 'admin'))) {
+      return fail('Назначать администраторов может только владелец или администратор этого канала.');
+    }
     if (d.memberKick && !confirm('Удалить участника из канала?')) return;
     if (d.memberBan && !confirm('Заблокировать участника навсегда?')) return;
     if (d.memberAdmin) actionResult = await sb.from('space_members').update({ role: 'admin' }).match({ space_id: sid, user_id: uid });
