@@ -13,6 +13,7 @@ SET search_path = public
 AS $$
 DECLARE
   actor_space_role text;
+  actor_is_global_staff boolean;
 BEGIN
   IF NEW.role IS DISTINCT FROM OLD.role THEN
     IF OLD.role = 'owner' OR NEW.role = 'owner' THEN
@@ -25,8 +26,15 @@ BEGIN
      WHERE sm.space_id = OLD.space_id
        AND sm.user_id = auth.uid();
 
-    IF actor_space_role IS NULL OR actor_space_role NOT IN ('owner', 'admin') THEN
-      RAISE EXCEPTION 'Изменять роли участников может только владелец или администратор этого канала';
+    SELECT (COALESCE(p.is_owner, false) OR COALESCE(p.is_coowner, false))
+      INTO actor_is_global_staff
+      FROM public.profiles AS p
+     WHERE p.id = auth.uid();
+
+    IF actor_space_role IS NULL
+       OR actor_space_role NOT IN ('owner', 'admin')
+       OR (COALESCE(actor_is_global_staff, false) AND actor_space_role <> 'owner') THEN
+      RAISE EXCEPTION 'Изменять роли участников может владелец канала или его администратор, не являющийся глобальным модератором';
     END IF;
   END IF;
 
