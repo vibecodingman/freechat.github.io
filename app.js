@@ -763,7 +763,7 @@ async function loadMembers(spaceId, admin) {
   box.innerHTML = (r.data || []).map(function (m) {
     var p = m.profiles || {};
     var localAdmin = CURRENT_SPACE && CURRENT_SPACE.id === spaceId &&
-      (CURRENT_SPACE._myRole === 'owner' || CURRENT_SPACE._myRole === 'admin');
+      (CURRENT_SPACE._myRole === 'owner' || (CURRENT_SPACE._myRole === 'admin' && !isStaff()));
     var actions = admin && m.role !== 'owner'
       ? '<div class="member-actions" hidden>' +
         (localAdmin ? '<button class="act" data-member-admin="' + spaceId + ':' + m.user_id + '">Назначить администратором</button>' : '') +
@@ -1573,8 +1573,8 @@ document.addEventListener('click', async function (e) {
     var sid = raw[0], uid = raw[1], actionResult;
     if (!sid || !uid) return fail('Не удалось определить участника. Обновите страницу.');
     if (d.memberAdmin && !(CURRENT_SPACE && CURRENT_SPACE.id === sid &&
-        (CURRENT_SPACE._myRole === 'owner' || CURRENT_SPACE._myRole === 'admin'))) {
-      return fail('Назначать администраторов может только владелец или администратор этого канала.');
+        (CURRENT_SPACE._myRole === 'owner' || (CURRENT_SPACE._myRole === 'admin' && !isStaff())))) {
+      return fail('Назначать администраторов может только владелец или администратор этого канала, не являющийся глобальным модератором.');
     }
     if (d.memberKick && !confirm('Удалить участника из канала?')) return;
     if (d.memberBan && !confirm('Заблокировать участника навсегда?')) return;
