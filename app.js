@@ -723,9 +723,9 @@ async function openSpaceById(spaceId) {
 }
 
 async function uploadSpaceAvatar(space, file) {
-  if (!space || !space.id || !file || !/^image\\//i.test(file.type || '')) return toast('Выберите файл изображения');
+  if (!space || !space.id || !file || !/^image\//i.test(file.type || '')) return toast('Выберите файл изображения');
   if (file.size > 5 * 1024 * 1024) return toast('Аватар канала должен быть не больше 5 МБ');
-  var path = ME.id + '/spaces/' + space.id + '/avatar-' + Date.now() + '-' + file.name.replace(/[^\\w.\\-]+/g, '_').slice(-40);
+  var path = ME.id + '/spaces/' + space.id + '/avatar-' + Date.now() + '-' + file.name.replace(/[^\w.-]+/g, '_').slice(-40);
   var up = await sb.storage.from('attachments').upload(path, file, {contentType:file.type,upsert:false});
   if (up.error) return fail('Не удалось загрузить аватар: ' + up.error.message);
   var saved = await sb.from('spaces').update({avatar_url:path}).eq('id',space.id);
@@ -856,7 +856,7 @@ $('#createSpace').onclick = async function () {
     // от пользователя, который ещё не стал его участником.
     var spaceId = makeUuid();
     var avatarFile = $('#spAvatar') && $('#spAvatar').files ? $('#spAvatar').files[0] : null;
-    if (avatarFile && (!/^image\\//i.test(avatarFile.type || '') || avatarFile.size > 5 * 1024 * 1024)) return toast('Аватар должен быть изображением до 5 МБ');
+    if (avatarFile && (!/^image\//i.test(avatarFile.type || '') || avatarFile.size > 5 * 1024 * 1024)) return toast('Аватар должен быть изображением до 5 МБ');
     var r = await sb.from('spaces').insert({
       id: spaceId, owner_id: ME.id, type: $('#spType').value, name: name,
       description: $('#spDesc').value.trim(), privacy: privacy,
@@ -867,7 +867,7 @@ $('#createSpace').onclick = async function () {
     var m = await sb.from('space_members').insert({ space_id: spaceId, user_id: ME.id, role: 'owner' });
     if (m.error) return fail('Пространство создано, но не удалось добавить вас в участники: ' + m.error.message);
     if (avatarFile && $('#spType').value === 'channel') {
-      var avatarPath = ME.id + '/spaces/' + spaceId + '/avatar-' + Date.now() + '-' + avatarFile.name.replace(/[^\\w.\\-]+/g, '_').slice(-40);
+      var avatarPath = ME.id + '/spaces/' + spaceId + '/avatar-' + Date.now() + '-' + avatarFile.name.replace(/[^\w.-]+/g, '_').slice(-40);
       var avatarUpload = await sb.storage.from('attachments').upload(avatarPath, avatarFile, {contentType:avatarFile.type,upsert:false});
       if (avatarUpload.error) toast('Канал создан, но аватар не загрузился: ' + avatarUpload.error.message);
       else { var avatarSave = await sb.from('spaces').update({avatar_url:avatarPath}).eq('id',spaceId); if (avatarSave.error) toast('Канал создан, но аватар не сохранился. Выполните channel-identity-migration.sql.'); }
