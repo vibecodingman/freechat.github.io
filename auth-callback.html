@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Возврат в Inomesto</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      max-width: 520px;
+      margin: 15vh auto;
+      padding: 24px;
+      text-align: center;
+      line-height: 1.5;
+    }
+    a {
+      display: inline-block;
+      margin-top: 18px;
+      padding: 12px 20px;
+      border-radius: 10px;
+      background: #2463eb;
+      color: white;
+      text-decoration: none;
+    }
+  </style>
+</head>
+<body>
+  <h2>Возвращаем вас в Inomesto</h2>
+  <p>Нажмите кнопку ниже, если приложение не открылось автоматически.</p>
+  <a id="openApp" href="#">Открыть Inomesto</a>
+
+  <script>
+    (function () {
+      var target = 'com.inomesto.app://auth/callback'
+        + window.location.search
+        + window.location.hash;
+
+      document.getElementById('openApp').href = target;
+
+      if (window.location.search.indexOf('code=') === -1 &&
+          window.location.search.indexOf('error=') === -1) {
+        document.querySelector('p').textContent =
+          'Не удалось найти данные авторизации. Вернитесь в приложение и попробуйте снова.';
+        return;
+      }
+
+      window.location.replace(target);
+    })();
+  </script>
+</body>
+</html>

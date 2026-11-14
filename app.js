@@ -7,6 +7,12 @@
 'use strict';
 
 var CFG = window.CONFIG || {};
+
+function isNativeApp() {
+  return !!(window.Capacitor &&
+    typeof window.Capacitor.isNativePlatform === 'function' &&
+    window.Capacitor.isNativePlatform());
+}
 /* Единый лимит вложений, не выше 50 МиБ. */
 var MAX = Math.min(Number(CFG.MAX_FILE_BYTES) || (50 * 1024 * 1024), 50 * 1024 * 1024);
 
@@ -41,7 +47,12 @@ if (!window.supabase) {
   return;
 }
 var sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, {
-  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
+  auth: {
+    flowType: 'pkce',
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: !isNativeApp()
+  }
 });
 
 var ME = null, STAGED = [], FEED = [], SIGNED = {}, SIGNED_EXPIRES = {}, AVATAR_URLS = {}, AVATAR_URL_EXPIRES = {}, SPACES = [], SPACE_SEARCH_RESULTS = [], SPACE_MY_ROLES = {}, SPACE_PENDING = {}, SPACE_SEARCH_TIMER = null, CONVS = [];
@@ -238,6 +249,67 @@ function siteUrl() {
   return location.origin + location.pathname;
 }
 
+var NATIVE_REDIRECT_URL = 'com.inomesto.app://auth/callback';
+var NATIVE_WEB_CALLBACK_URL = siteUrl().replace(/\/+$/, '') + '/auth-callback.html';
+var nativeAuthHandled = false;
+
+async function handleNativeAuthUrl(url) {
+  if (!isNativeApp() || !url ||
+      url.indexOf(NATIVE_REDIRECT_URL) !== 0 || nativeAuthHandled) return;
+
+  nativeAuthHandled = true;
+
+  try {
+    var parsed = new URL(url);
+    var error = parsed.searchParams.get('error_description') ||
+                parsed.searchParams.get('error');
+
+    if (error) throw new Error(error);
+
+    var code = parsed.searchParams.get('code');
+
+    if (code) {
+      var result = await sb.auth.exchangeCodeForSession(code);
+      if (result.error) throw result.error;
+    } else {
+      var h = new URLSearchParams(String(parsed.hash || '').replace(/^#/, ''));
+      var at = h.get('access_token');
+      var rt = h.get('refresh_token');
+
+      if (!at || !rt) {
+        throw new Error('Не найден код авторизации в ссылке возврата.');
+      }
+
+      var sessionResult = await sb.auth.setSession({
+        access_token: at,
+        refresh_token: rt
+      });
+
+      if (sessionResult.error) throw sessionResult.error;
+    }
+
+    try {
+      await window.NativeAuthBridge.Browser.close();
+    } catch (_) {}
+  } catch (e) {
+    nativeAuthHandled = false;
+    fail('Не удалось завершить вход: ' + (e.message || e));
+  }
+}
+
+async function setupNativeAuth() {
+  if (!isNativeApp() || !window.NativeAuthBridge) return;
+
+  await window.NativeAuthBridge.App.addListener('appUrlOpen', function (event) {
+    handleNativeAuthUrl(event.url);
+  });
+
+  var launch = await window.NativeAuthBridge.App.getLaunchUrl();
+  if (launch && launch.url) {
+    await handleNativeAuthUrl(launch.url);
+  }
+}
+
 function hashParams() {
   return new URLSearchParams(String(location.hash || '').replace(/^#/, ''));
 }
@@ -254,10 +326,33 @@ async function adoptHashSession() {
   return true;
 }
 
-function signIn(provider) {
+async function signIn(provider) {
   if (PROV[provider] === false) {
     return fail('Вход через ' + (PROV_RU[provider] || provider) + ' выключен в файле config.js');
   }
+
+  if (isNativeApp() && window.NativeAuthBridge) {
+    try {
+      var result = await sb.auth.signInWithOAuth({
+        provider: provider,
+        options: {
+          redirectTo: NATIVE_WEB_CALLBACK_URL,
+          skipBrowserRedirect: true
+        }
+      });
+
+      if (result.error) throw result.error;
+      if (!result.data || !result.data.url) {
+        throw new Error('Supabase не вернул ссылку для входа.');
+      }
+
+      await window.NativeAuthBridge.Browser.open({ url: result.data.url });
+    } catch (e) {
+      fail(humanAuthError(e.message || e));
+    }
+    return;
+  }
+
   var back = siteUrl();
   sb.auth.signInWithOAuth({ provider: provider, options: { redirectTo: back } })
     .then(function (r) { if (r.error) fail(humanAuthError(r.error.message)); });
@@ -307,7 +402,7 @@ async function boot() {
     if (await adoptHashSession()) s = await sb.auth.getSession();
   }
   if (!s.data.session) {
-    if (/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) {
+    if (!isNativeApp() && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)) {
       reportError('Сайт открыт на localhost. Значит в Supabase → Authentication → URL Configuration в поле Site URL до сих пор стоит http://localhost:3000. Замените его на адрес сайта и добавьте тот же адрес в Redirect URLs.');
     }
     showScreen('auth');
@@ -1652,9 +1747,9 @@ $('#runDiag').onclick = async function () {
       (ME && ME.is_verified ? ', есть галочка' : ''));
     out.push('Кнопка GitHub: ' + (PROV.github === false ? 'выключена в config.js' : 'включена'));
     out.push('Адрес возврата после входа: ' + siteUrl());
-    out.push(/^(localhost|127\.0\.0\.1)$/.test(location.hostname)
+    out.push(!isNativeApp() && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)
       ? '⚠️ Сайт открыт на localhost — в Supabase Site URL всё ещё http://localhost:3000'
-      : '✅ Сайт открыт по настоящему адресу');
+      : '✅ Адрес приложения определён корректно');
   } catch (e) { out.push('❌ Сбой: ' + (e.message || e)); }
   $('#diagOut').innerHTML = out.join('<br>');
 };
@@ -1668,5 +1763,8 @@ async function checkInvite() {
   loadSpaces();
 }
 
-boot().then(checkInvite).catch(function (e) { fail('Запуск не удался: ' + (e.message || e)); });
+setupNativeAuth()
+  .then(function () { return boot(); })
+  .then(checkInvite)
+  .catch(function (e) { fail('Запуск не удался: ' + (e.message || e)); });
 })();
