@@ -250,12 +250,47 @@ function siteUrl() {
 }
 
 var NATIVE_REDIRECT_URL = 'com.inomesto.app://auth/callback';
+var NATIVE_HANDOFF_URL = 'com.inomesto.app://auth/handoff';
 var NATIVE_WEB_CALLBACK_URL = siteUrl().replace(/\/+$/, '') + '/auth-callback.html';
 var nativeAuthHandled = false;
 
+var nativeHandoffHandled = false;
+
+async function handleNativeHandoffUrl(url) {
+  if (!isNativeApp() || !url || url.indexOf(NATIVE_HANDOFF_URL) !== 0 || nativeHandoffHandled) return;
+  nativeHandoffHandled = true;
+  try {
+    var parsed = new URL(url);
+    var code = parsed.searchParams.get('code');
+    if (!code || code.length > 200) throw new Error('В ссылке отсутствует код передачи входа.');
+
+    var redemption = await sb.functions.invoke('redeem-app-handoff', { body: { code: code } });
+    if (redemption.error) throw redemption.error;
+    if (!redemption.data || !redemption.data.email || !redemption.data.token_hash) {
+      throw new Error('Код истёк или уже был использован. Вернитесь на сайт и создайте новую ссылку.');
+    }
+
+    var verified = await sb.auth.verifyOtp({
+      email: redemption.data.email,
+      token_hash: redemption.data.token_hash,
+      type: 'magiclink'
+    });
+    if (verified.error) throw verified.error;
+
+    try { await window.NativeAuthBridge.Browser.close(); } catch (_) {}
+  } catch (e) {
+    nativeHandoffHandled = false;
+    fail('Не удалось перенести вход в приложение: ' + (e.message || e));
+  }
+}
+
 async function handleNativeAuthUrl(url) {
-  if (!isNativeApp() || !url ||
-      url.indexOf(NATIVE_REDIRECT_URL) !== 0 || nativeAuthHandled) return;
+  if (!isNativeApp() || !url) return;
+  if (url.indexOf(NATIVE_HANDOFF_URL) === 0) {
+    await handleNativeHandoffUrl(url);
+    return;
+  }
+  if (url.indexOf(NATIVE_REDIRECT_URL) !== 0 || nativeAuthHandled) return;
 
   nativeAuthHandled = true;
 
@@ -377,6 +412,25 @@ if ($('#signInEmail')) $('#signInEmail').onclick = async function () {
 
 if ($('#signOut')) $('#signOut').onclick = function () { sb.auth.signOut().then(function () { location.reload(); }); };
 
+/* Передача текущей веб-сессии в Android через короткоживущий одноразовый код. */
+if ($('#openNativeApp')) $('#openNativeApp').onclick = async function () {
+  var button = $('#openNativeApp');
+  button.disabled = true;
+  button.textContent = 'Готовим вход…';
+  try {
+    var current = await sb.auth.getSession();
+    if (!current.data || !current.data.session) throw new Error('Сначала войдите на сайт.');
+    var handoff = await sb.functions.invoke('create-app-handoff', { body: {} });
+    if (handoff.error) throw handoff.error;
+    if (!handoff.data || !handoff.data.code) throw new Error('Сервер не вернул код передачи входа.');
+    window.location.href = 'com.inomesto.app://auth/handoff?code=' + encodeURIComponent(handoff.data.code);
+  } catch (e) {
+    button.disabled = false;
+    button.textContent = 'Открыть приложение';
+    fail('Не удалось открыть приложение: ' + (e.message || e));
+  }
+};
+
 /* Прячем кнопки способов, которые выключены в config.js */
 if (PROV.github === false && $('#signInGitHub')) $('#signInGitHub').hidden = true;
 if (PROV.google === false && $('#signInGoogle')) $('#signInGoogle').hidden = true;
@@ -413,7 +467,7 @@ async function boot() {
 
 /* Если вход случился уже после загрузки страницы — дорисовываем интерфейс. */
 sb.auth.onAuthStateChange(function (event, session) {
-  if (event === 'SIGNED_IN' && session && !ME) {
+  if (event === 'SIGNED_IN' && session && (!ME || ME.id !== session.user.id)) {
     afterLogin(session.user).catch(function (e) { fail(e.message || e); });
   }
 });
