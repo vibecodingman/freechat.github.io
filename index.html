@@ -34,18 +34,24 @@
       <input id="emailInput" type="email" autocomplete="email" placeholder="pochta@example.com"></label>
     <button class="btn provider" id="signInEmail">Прислать ссылку для входа</button>
 
-    <p class="fine" id="authHint">Регистрация свободная, пароль не нужен. GitHub в России открывается без VPN.</p>
+    <div class="or"><span>или войти по username</span></div>
+    <label class="field"><span>Username</span><input id="loginUsername" autocomplete="username" maxlength="24" placeholder="username"></label>
+    <label class="field"><span>Пароль Inomesto</span><input id="loginPassword" type="password" autocomplete="current-password" placeholder="Пароль"></label>
+    <button class="btn provider" id="signInUsername" type="button">Войти</button>
+    <p class="fine" id="authHint">Для регистрации сначала войдите через Google или GitHub, затем создайте username и пароль Inomesto.</p>
   </div>
 </section>
 
 <section id="screen-onboarding" class="screen">
   <div class="auth-card">
-    <h1>Заполните профиль</h1>
-    <p class="muted">Имя обязательно, остальное — по желанию.</p>
+    <h1 id="onboardingTitle">Завершите регистрацию</h1>
+    <p class="muted" id="onboardingDescription">После входа через Google или GitHub придумайте username и пароль Inomesto.</p>
     <label class="field"><span>Имя</span><input id="obName" maxlength="40" placeholder="Как вас зовут"></label>
-    <label class="field"><span>Имя пользователя (латиницей)</span><input id="obUser" maxlength="24" placeholder="username"></label>
+    <label class="field"><span>Username (латиницей)</span><input id="obUser" maxlength="24" autocomplete="username" placeholder="username"></label>
     <label class="field"><span>О себе</span><input id="obBio" maxlength="160" placeholder="Пара слов о себе"></label>
-    <button class="btn primary wide" id="saveOnboarding">Продолжить</button>
+    <label class="field"><span>Пароль Inomesto (минимум 8 символов)</span><input id="obPassword" type="password" minlength="8" autocomplete="new-password" placeholder="Придумайте пароль"></label>
+    <label class="field"><span>Повторите пароль</span><input id="obPasswordAgain" type="password" minlength="8" autocomplete="new-password" placeholder="Повторите пароль"></label>
+    <button class="btn primary wide" id="saveOnboarding">Сохранить и продолжить</button>
   </div>
 </section>
 
@@ -134,6 +140,13 @@
           </select>
         </label>
         <button class="btn primary" id="saveProfile">Сохранить</button>
+      <div class="card">
+        <h3>Безопасность аккаунта</h3>
+        <p class="muted">Пароль нужен для входа в Inomesto по username на сайте и в Android-приложении.</p>
+        <label class="field"><span>Новый пароль (минимум 8 символов)</span><input id="accountPassword" type="password" minlength="8" autocomplete="new-password"></label>
+        <label class="field"><span>Повторите новый пароль</span><input id="accountPasswordAgain" type="password" minlength="8" autocomplete="new-password"></label>
+        <button class="btn primary" id="saveAccountPassword" type="button">Сохранить пароль</button>
+      </div>
       </div>
       <div class="card">
         <h3>Уведомления</h3>
@@ -230,6 +243,6 @@
 
 <script src="config.js"></script>
 <script src="native-auth-bridge.bundle.js"></script>
-<script src="app.js?v=20261113-channel-identity-1"></script>
+<script src="app.js?v=20261115-username-password-1"></script>
 </body>
 </html>

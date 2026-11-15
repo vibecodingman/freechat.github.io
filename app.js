@@ -396,6 +396,32 @@ async function signIn(provider) {
 if ($('#signInGitHub')) $('#signInGitHub').onclick = function () { signIn('github'); };
 if ($('#signInGoogle')) $('#signInGoogle').onclick = function () { signIn('google'); };
 
+async function signInWithUsername() {
+  var username = ($('#loginUsername').value || '').trim().toLowerCase();
+  var password = $('#loginPassword').value || '';
+  if (!username || !password) return toast('Введите username и пароль');
+  var button = $('#signInUsername');
+  button.disabled = true;
+  button.textContent = 'Входим…';
+  try {
+    var result = await sb.functions.invoke('username-login', { body: { username: username, password: password } });
+    if (result.error || !result.data || !result.data.access_token || !result.data.refresh_token) {
+      throw new Error((result.data && result.data.error) || (result.error && result.error.message) || 'Неверный username или пароль');
+    }
+    var session = await sb.auth.setSession({
+      access_token: result.data.access_token,
+      refresh_token: result.data.refresh_token
+    });
+    if (session.error) throw session.error;
+  } catch (e) {
+    fail(e.message || 'Не удалось войти');
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Войти';
+  }
+}
+if ($('#signInUsername')) $('#signInUsername').onclick = signInWithUsername;
+
 if ($('#signInEmail')) $('#signInEmail').onclick = async function () {
   try {
     var em = ($('#emailInput').value || '').trim();
@@ -411,6 +437,23 @@ if ($('#signInEmail')) $('#signInEmail').onclick = async function () {
 };
 
 if ($('#signOut')) $('#signOut').onclick = function () { sb.auth.signOut().then(function () { location.reload(); }); };
+
+if ($('#saveAccountPassword')) $('#saveAccountPassword').onclick = async function () {
+  var password = $('#accountPassword').value || '';
+  var again = $('#accountPasswordAgain').value || '';
+  if (password.length < 8) return toast('Пароль должен содержать минимум 8 символов');
+  if (password !== again) return toast('Пароли не совпадают');
+  try {
+    var changed = await sb.auth.updateUser({ password: password });
+    if (changed.error) throw changed.error;
+    var saved = await sb.from('profiles').update({ password_login_enabled: true }).eq('id', ME.id);
+    if (saved.error) throw saved.error;
+    ME.password_login_enabled = true;
+    $('#accountPassword').value = '';
+    $('#accountPasswordAgain').value = '';
+    toast('Пароль Inomesto сохранён');
+  } catch (e) { fail('Не удалось изменить пароль: ' + (e.message || e)); }
+};
 
 /* Передача текущей веб-сессии в Android через короткоживущий одноразовый код. */
 if ($('#openNativeApp')) $('#openNativeApp').onclick = async function () {
@@ -491,11 +534,20 @@ async function afterLogin(user) {
     if (ins.error) { fail('Профиль не создался: ' + ins.error.message); showScreen('auth'); return; }
     ME = ins.data;
   }
-  if (!ME.username) {
+  if (!ME.username || !ME.password_login_enabled) {
     showScreen('onboarding');
     $('#obName').value = ME.display_name || '';
+    $('#obUser').value = ME.username || '';
+    $('#obUser').readOnly = !!ME.username;
+    $('#obBio').value = ME.bio || '';
+    $('#obPassword').value = '';
+    $('#obPasswordAgain').value = '';
     var hint = (user.user_metadata && (user.user_metadata.user_name || user.user_metadata.preferred_username)) || '';
-    $('#obUser').value = String(hint).toLowerCase().replace(/[^a-z0-9_.]/g, '').slice(0, 24);
+    if (!ME.username) $('#obUser').value = String(hint).toLowerCase().replace(/[^a-z0-9_.]/g, '').slice(0, 24);
+    $('#onboardingTitle').textContent = ME.username ? 'Создайте пароль Inomesto' : 'Завершите регистрацию';
+    $('#onboardingDescription').textContent = ME.username
+      ? 'Ваш профиль сохранён. Придумайте пароль, чтобы входить в приложение по username.'
+      : 'После входа через Google или GitHub придумайте username и пароль для Inomesto.';
     return;
   }
   await loadNotificationPrefs();
@@ -521,12 +573,19 @@ $('#saveOnboarding').onclick = async function () {
   try {
     var name = $('#obName').value.trim();
     var uname = $('#obUser').value.trim().toLowerCase().replace(/[^a-z0-9_.]/g, '');
+    var password = $('#obPassword').value || '';
+    var passwordAgain = $('#obPasswordAgain').value || '';
     if (!name) return toast('Введите имя');
-    if (uname.length < 3) return toast('Логин: минимум 3 символа латиницей');
+    if (uname.length < 3) return toast('Username: минимум 3 символа латиницей');
+    if (password.length < 8) return toast('Пароль должен содержать минимум 8 символов');
+    if (password !== passwordAgain) return toast('Пароли не совпадают');
+    var updated = await sb.auth.updateUser({ password: password });
+    if (updated.error) return fail('Не удалось сохранить пароль: ' + updated.error.message);
     var r = await sb.from('profiles').update({
-      display_name: name, username: uname, bio: $('#obBio').value.trim()
+      display_name: name, username: uname, bio: $('#obBio').value.trim(),
+      password_login_enabled: true
     }).eq('id', ME.id).select().maybeSingle();
-    if (r.error) return toast(r.error.message.indexOf('duplicate') >= 0 ? 'Этот логин уже занят' : r.error.message);
+    if (r.error) return toast(r.error.message.indexOf('duplicate') >= 0 ? 'Этот username уже занят' : r.error.message);
     ME = r.data;
     await loadNotificationPrefs();
     showScreen('app');
