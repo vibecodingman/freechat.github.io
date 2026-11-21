@@ -1,14 +1,23 @@
-
 <!DOCTYPE html>
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Inomesto</title>
-<link rel="stylesheet" href="styles.css?v=20261112-member-layout-3">
+<link rel="stylesheet" href="styles.css?v=20261121-theme-1">
 <script src="vendor/supabase.js"></script>
 </head>
 <body>
+
+<div id="inomestoSplash" class="inomesto-splash" aria-hidden="true">
+  <div class="splash-stage" id="splashStage">
+    <div class="splash-word" id="splashWord" aria-label="Inomesto">
+      <span class="splash-letter">I</span><span class="splash-letter">n</span><span class="splash-letter">o</span><span class="splash-letter">m</span><span class="splash-letter">e</span><span class="splash-letter">s</span><span class="splash-letter">t</span><span class="splash-letter">o</span>
+    </div>
+    <div class="splash-logo" id="splashLogo">I</div>
+  </div>
+</div>
+
 
 <div id="diag" class="diag" hidden></div>
 
@@ -65,7 +74,6 @@
       <button class="tab" data-tab="me"><span class="tab-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0"/></svg></span><span class="tab-label">Профиль</span></button>
       <button class="tab staff-only" data-tab="mod" hidden><span class="tab-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 20 6v5.5c0 4.5-3.1 7.8-8 9.5-4.9-1.7-8-5-8-9.5V6l8-3Z"/><path d="m8.5 12 2.3 2.3 4.8-5"/></svg></span><span class="tab-label">Модерация</span></button>
     </nav>
-    <button class="btn ghost" id="signOut">Выйти</button>
   </header>
 
   <div class="banner" id="muteBanner" hidden></div>
@@ -122,11 +130,6 @@
     <div class="pane" id="pane-me">
       <div class="card profile-self"><div id="meAvatar"></div><div><h2 id="meName">—</h2><p class="muted" id="meMeta"></p><div id="meStatus"></div></div></div>
       <div class="card">
-        <h3>Приложение Inomesto</h3>
-        <p class="muted">Откройте Android-приложение с тем же аккаунтом — повторно входить не придётся.</p>
-        <button class="btn primary" id="openNativeApp" type="button">Открыть приложение</button>
-      </div>
-      <div class="card">
         <h3>Настройки</h3>
         <label class="field"><span>Аватар профиля</span><input id="avatarInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif"><small class="sub">PNG, JPG, WebP или GIF, до 5 МБ</small></label>
         <label class="field"><span>Имя</span><input id="setName"></label>
@@ -148,6 +151,17 @@
         <button class="btn primary" id="saveAccountPassword" type="button">Сохранить пароль</button>
       </div>
       </div>
+      <div class="card theme-settings">
+        <h3>Оформление</h3>
+        <p class="muted">Выберите удобную цветовую тему приложения. Настройка сохраняется на этом устройстве.</p>
+        <label class="field">
+          <span>Тема приложения</span>
+          <select id="themeSelect">
+            <option value="light">Светлая</option>
+            <option value="dark">Тёмная</option>
+          </select>
+        </label>
+      </div>
       <div class="card">
         <h3>Уведомления</h3>
         <p class="muted">Настройки сохраняются в аккаунте и действуют на всех ваших устройствах. Лайки не отправляют уведомлений.</p>
@@ -159,6 +173,8 @@
             <option value="both">Оба способа</option>
           </select>
         </label>
+        <button class="btn primary" id="enableNativePush" type="button">Включить push-уведомления</button>
+        <div class="sub mt">Push-уведомления Android. Для работы нужно разрешить уведомления.</div>
         <button class="btn ghost" id="enableBrowserNotifications" type="button">Разрешить уведомления браузера</button>
         <div class="sub mt">Уведомления браузера работают, пока сайт открыт. Для них нужно разрешение браузера.</div>
         <hr class="settings-divider">
@@ -176,8 +192,12 @@
       </div>
       <div class="card">
         <h3>Поддержка</h3>
-        <p class="muted">Обращение увидят владелец и совладельцы. Ответ придёт от имени чата поддержки.</p>
+        <p class="muted">Наши модераторы увидят ваше сообщение и постараются как можно скорее решить вашу проблему.</p>
         <button class="btn ghost" id="openSupport">Открыть чат поддержки</button>
+      </div>
+      <div class="card">
+        <h3>Аккаунт</h3>
+        <button class="btn ghost" id="signOut" type="button">Выйти из аккаунта</button>
       </div>
     </div>
 
@@ -240,9 +260,8 @@
 </div>
 
 <div id="toast" class="toast"></div>
-
 <script src="config.js"></script>
-<script src="native-auth-bridge.bundle.js"></script>
-<script src="app.js?v=20261115-username-password-1"></script>
+<script src="push-plugin.js"></script>
+  <script src="app.js?v=20261121-theme-1"></script>
 </body>
 </html>

@@ -42,6 +42,22 @@ var sizeF = function (b) { return b >= 1048576 ? (b / 1048576).toFixed(1) + ' М
 var dateF = function (t) { return new Date(t).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); };
 var ini = function (n) { return esc(String(n || '?').trim().charAt(0).toUpperCase() || '?'); };
 
+/* ================= ТЕМА ОФОРМЛЕНИЯ ================= */
+var THEME_KEY = 'inomesto-theme';
+
+function applyTheme(theme) {
+  theme = theme === 'dark' ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', theme);
+  try { localStorage.setItem(THEME_KEY, theme); } catch (_) {}
+  var selector = document.getElementById('themeSelect');
+  if (selector) selector.value = theme;
+}
+
+var savedTheme = 'light';
+try { savedTheme = localStorage.getItem(THEME_KEY) || 'light'; } catch (_) {}
+applyTheme(savedTheme);
+
+
 if (!window.supabase) {
   reportError('Не загрузился клиент Supabase. Проверьте интернет или отключите блокировщик рекламы.');
   return;
@@ -57,8 +73,82 @@ var sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, {
 
 var ME = null, STAGED = [], FEED = [], SIGNED = {}, SIGNED_EXPIRES = {}, AVATAR_URLS = {}, AVATAR_URL_EXPIRES = {}, SPACES = [], SPACE_SEARCH_RESULTS = [], SPACE_MY_ROLES = {}, SPACE_PENDING = {}, SPACE_SEARCH_TIMER = null, CONVS = [];
 var CHAT_STAGED = [], CHAT_SENDING = false;
+var CONV_LOAD_SEQ = 0;
+var PENDING_PUSH_CONVERSATION_ID = null;
+var PUSH_CHAT_OPENING = false;
 var CHAT_RECORDER = null, CHAT_RECORD_STREAM = null, CHAT_RECORD_PARTS = [], CHAT_RECORD_TIMER = null;
 var CHAT_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
+
+
+/* ================= ЛОКАЛЬНЫЙ КЕШ =================
+   IndexedDB переживает закрытие приложения и перезагрузку устройства.
+   Ключи разделены по user_id; при выходе удаляется только кеш текущего аккаунта.
+*/
+var CACHE_DB_NAME = 'inomesto-local-cache-v1';
+var CACHE_DB_PROMISE = null;
+function cacheDb() {
+  if (!('indexedDB' in window)) return Promise.resolve(null);
+  if (CACHE_DB_PROMISE) return CACHE_DB_PROMISE;
+  CACHE_DB_PROMISE = new Promise(function (resolve) {
+    try {
+      var request = indexedDB.open(CACHE_DB_NAME, 1);
+      request.onupgradeneeded = function () {
+        var db = request.result;
+        if (!db.objectStoreNames.contains('items')) db.createObjectStore('items', { keyPath: 'key' });
+      };
+      request.onsuccess = function () { resolve(request.result); };
+      request.onerror = function () { resolve(null); };
+      request.onblocked = function () { resolve(null); };
+    } catch (_) { resolve(null); }
+  });
+  return CACHE_DB_PROMISE;
+}
+function cacheKey(kind, id) { return String(ME && ME.id || '') + '|' + kind + '|' + String(id || ''); }
+async function cacheGet(kind, id) {
+  var db = await cacheDb();
+  if (!db || !ME) return null;
+  return new Promise(function (resolve) {
+    try {
+      var tx = db.transaction('items', 'readonly');
+      var req = tx.objectStore('items').get(cacheKey(kind, id));
+      req.onsuccess = function () { resolve(req.result && req.result.value != null ? req.result.value : null); };
+      req.onerror = function () { resolve(null); };
+    } catch (_) { resolve(null); }
+  });
+}
+async function cachePut(kind, id, value) {
+  var db = await cacheDb();
+  if (!db || !ME) return;
+  return new Promise(function (resolve) {
+    try {
+      var tx = db.transaction('items', 'readwrite');
+      tx.objectStore('items').put({ key: cacheKey(kind, id), user_id: ME.id, value: value, saved_at: Date.now() });
+      tx.oncomplete = function () { resolve(); };
+      tx.onerror = function () { resolve(); };
+      tx.onabort = function () { resolve(); };
+    } catch (_) { resolve(); }
+  });
+}
+async function cacheClearUser(userId) {
+  var db = await cacheDb();
+  if (!db || !userId) return;
+  return new Promise(function (resolve) {
+    try {
+      var tx = db.transaction('items', 'readwrite');
+      var store = tx.objectStore('items');
+      var req = store.openCursor();
+      req.onsuccess = function () {
+        var cursor = req.result;
+        if (!cursor) return;
+        if (cursor.value && cursor.value.user_id === userId) cursor.delete();
+        cursor.continue();
+      };
+      tx.oncomplete = function () { resolve(); };
+      tx.onerror = function () { resolve(); };
+      tx.onabort = function () { resolve(); };
+    } catch (_) { resolve(); }
+  });
+}
 
 function makeUuid() {
   if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
@@ -93,6 +183,105 @@ function fail(msg) { toast(msg); reportError(msg); }
 function notificationDefaults() {
   return { dm_enabled: true, dm_delivery: 'in_app', space_badges: true, comment_badges: true };
 }
+
+/* ================= ANDROID PUSH ================= */
+
+var nativePushInitialized = false;
+
+async function saveNativePushToken(token) {
+  if (!ME || !token) return;
+
+  var result = await sb.from('push_devices').upsert({
+    user_id: ME.id,
+    token: token,
+    platform: 'android',
+    updated_at: new Date().toISOString()
+  }, { onConflict: 'token' });
+
+  if (result.error) {
+    fail('Не удалось сохранить токен push-уведомлений: ' + result.error.message);
+  } else {
+
+  }
+}
+
+async function registerNativePush(requestPermission) {
+  var plugin = window.InomestoPushNotifications;
+
+  if (!isNativeApp() || !plugin || !ME) return;
+
+  try {
+    var permission = await plugin.checkPermissions();
+
+    if (permission.receive !== 'granted' && requestPermission) {
+      permission = await plugin.requestPermissions();
+    }
+
+    if (permission.receive !== 'granted') {
+      if (requestPermission) {
+        toast('Разрешение на push-уведомления не получено');
+      }
+      return;
+    }
+
+    await plugin.register();
+
+    if (requestPermission) {
+      toast('Регистрация push-уведомлений запущена');
+    }
+  } catch (e) {
+    fail('Ошибка регистрации push: ' + (e.message || e));
+  }
+}
+
+async function initNativePush() {
+  if (!isNativeApp() || !ME) return;
+
+  var plugin = window.InomestoPushNotifications;
+
+  if (!plugin) {
+    reportError('Не загружен модуль Android Push Notifications. Проверьте push-plugin.js.');
+    return;
+  }
+
+  if (!nativePushInitialized) {
+    nativePushInitialized = true;
+
+    await plugin.addListener('registration', function (token) {
+      saveNativePushToken(token.value).catch(function (e) {
+        reportError(e.message || e);
+      });
+    });
+
+    await plugin.addListener('registrationError', function (error) {
+      reportError('Firebase не зарегистрировал устройство: ' +
+        (error.error || 'неизвестная ошибка'));
+    });
+
+    await plugin.addListener('pushNotificationActionPerformed', function (event) {
+      var data = (event.notification && event.notification.data) || {};
+
+      if (data.conversation_id) {
+        openPushConversation(data.conversation_id);
+      }
+    });
+  }
+
+  var button = $('#enableNativePush');
+
+  if (button) {
+    button.onclick = function () {
+      registerNativePush(true);
+    };
+  }
+
+  // Если разрешение уже выдано, повторно регистрируем устройство
+  // без нового запроса разрешения.
+  await registerNativePush(false);
+}
+
+/* ================= END ANDROID PUSH ================= */
+
 async function loadNotificationPrefs() {
   var r = await sb.from('notification_preferences').select('*').eq('user_id', ME.id).maybeSingle();
   if (r.error) {
@@ -204,21 +393,89 @@ function showScreen(id) {
   if (el) el.classList.add('active');
 }
 
-function showTab(name) {
+function animateInomestoElement(el, fromX, fromY, duration) {
+  if (!el || !el.animate) return;
+
+  if (window.matchMedia &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+  el.animate([
+    {
+      opacity: 0,
+      transform: 'translate3d(' + fromX + 'px,' + fromY + 'px,0)'
+    },
+    {
+      opacity: 1,
+      transform: 'translate3d(0,0,0)'
+    }
+  ], {
+    duration: duration || 250,
+    easing: 'cubic-bezier(.22,1,.36,1)'
+  });
+}
+
+function showTab(name, skipChatLoad) {
+  if (name !== 'spaces') document.body.classList.remove('channel-open');
+
   if (name === 'mod' && !isStaff()) {
     toast('У вас нет доступа к панели модерации');
     name = 'feed';
   }
-  Array.prototype.forEach.call(document.querySelectorAll('.pane'), function (p) { p.classList.remove('active'); });
+
+  var previousPane = document.querySelector('.pane.active');
   var pane = document.getElementById('pane-' + name);
-  if (pane) pane.classList.add('active');
-  $$('[data-tab]').forEach(function (b) { b.classList.toggle('active', b.dataset.tab === name); });
+  var changed = pane && pane !== previousPane;
+
+  Array.prototype.forEach.call(document.querySelectorAll('.pane'), function (p) {
+    p.classList.remove('active');
+  });
+
+  if (pane) {
+    pane.classList.add('active');
+    if (changed) animateInomestoElement(pane, 0, 12, 240);
+  }
+
+  $$('[data-tab]').forEach(function (b) {
+    b.classList.toggle('active', b.dataset.tab === name);
+  });
+
   window.scrollTo(0, 0);
+
   if (name === 'feed') { CURRENT_SPACE = null; loadFeed(); }
   if (name === 'spaces') loadSpaces();
-  if (name === 'chats') loadConversations();
+  if (name === 'chats' && !skipChatLoad) loadConversations();
   if (name === 'me') renderMe();
   if (name === 'mod') loadModeration();
+}
+
+async function openPushConversation(id) {
+  if (!id) return;
+  PENDING_PUSH_CONVERSATION_ID = String(id);
+
+  if (!ME || PUSH_CHAT_OPENING) return;
+
+  PUSH_CHAT_OPENING = true;
+  try {
+    showScreen('app');
+    showTab('chats', true);
+
+    await loadConversations();
+
+    if (!ME) return;
+
+    var exists = CONVS.some(function (c) {
+      return String(c.id) === String(id);
+    });
+
+    if (exists) {
+      await openConv(id);
+      PENDING_PUSH_CONVERSATION_ID = null;
+    }
+  } catch (e) {
+    fail('Не удалось открыть чат из уведомления: ' + (e.message || e));
+  } finally {
+    PUSH_CHAT_OPENING = false;
+  }
 }
 
 /* ================= ВХОД ================= */
@@ -436,7 +693,10 @@ if ($('#signInEmail')) $('#signInEmail').onclick = async function () {
   } catch (e) { fail(e.message || e); }
 };
 
-if ($('#signOut')) $('#signOut').onclick = function () { sb.auth.signOut().then(function () { location.reload(); }); };
+if ($('#signOut')) $('#signOut').onclick = async function () { var userId = ME && ME.id; $('#signOut').disabled = true; try { if (userId) {
+  await sb.from('push_devices').delete().eq('user_id', userId);
+  await cacheClearUser(userId);
+} var out = await sb.auth.signOut(); if (out.error) throw out.error; location.reload(); } catch (e) { $('#signOut').disabled = false; fail('Не удалось выйти из аккаунта: ' + (e.message || e)); } };
 
 if ($('#saveAccountPassword')) $('#saveAccountPassword').onclick = async function () {
   var password = $('#accountPassword').value || '';
@@ -551,11 +811,16 @@ async function afterLogin(user) {
     return;
   }
   await loadNotificationPrefs();
+  await initNativePush();
   showScreen('app');
   startNotificationPolling();
   syncStaffUI();
   renderIdentity();
-  showTab('feed');
+  if (PENDING_PUSH_CONVERSATION_ID) {
+    await openPushConversation(PENDING_PUSH_CONVERSATION_ID);
+  } else {
+    showTab('feed');
+  }
 }
 
 function renderIdentity() {
@@ -588,6 +853,7 @@ $('#saveOnboarding').onclick = async function () {
     if (r.error) return toast(r.error.message.indexOf('duplicate') >= 0 ? 'Этот username уже занят' : r.error.message);
     ME = r.data;
     await loadNotificationPrefs();
+  await initNativePush();
     showScreen('app');
     startNotificationPolling();
     syncStaffUI();
@@ -714,66 +980,72 @@ function postHtml(p) {
 async function loadFeed() {
   var box = $('#feed');
   if (!box || !ME) return;
+  var userId = ME.id;
   box.innerHTML = '<div class="card empty">Загружаем публикации ваших каналов…</div>';
   try {
-    var membership = await sb.from('space_members').select('space_id').eq('user_id', ME.id);
-    if (membership.error) { fail('Не удалось загрузить подписки: ' + membership.error.message); return; }
-
-    var ids = Array.from(new Set((membership.data || []).map(function (m) { return m.space_id; }).filter(Boolean)));
+    var cached = await cacheGet('feed', 'main');
+    if (cached && ME && ME.id === userId) {
+      FEED = cached;
+      await signPaths(FEED);
+      var ca = FEED.reduce(function (a,p) { a.push(p.author || {}); if (p._space) a.push({display_name:p._space.name,avatar_url:p._space.avatar_url}); (p.comments || []).forEach(function(c){a.push(c.author || {});}); return a; }, []);
+      await signAvatarPaths(ca);
+      if (ME && ME.id === userId) box.innerHTML = FEED.length ? FEED.map(postHtml).join('') : '<div class="card empty">Новых публикаций пока нет.</div>';
+    }
+    var membership = await sb.from('space_members').select('space_id').eq('user_id', userId);
+    if (membership.error) throw new Error('Не удалось загрузить подписки: ' + membership.error.message);
+    var ids = Array.from(new Set((membership.data || []).map(function(m){return m.space_id;}).filter(Boolean)));
     if (!ids.length) {
-      FEED = [];
+      FEED = []; await cachePut('feed','main',[]);
       box.innerHTML = '<div class="card empty"><h3>В вашей ленте пока тихо</h3><p>Подпишитесь на интересные каналы — их новые публикации будут появляться здесь.</p><button class="btn primary" id="feedFindChannelsEmpty">Найти каналы</button></div>';
-      var findEmpty = $('#feedFindChannelsEmpty');
-      if (findEmpty) findEmpty.onclick = function () { showTab('spaces'); };
-      return;
+      var fe = $('#feedFindChannelsEmpty'); if (fe) fe.onclick = function(){showTab('spaces');}; return;
     }
-
-    var spacesResult = await sb.from('spaces').select('id,name,avatar_url,is_archived,type,description,privacy,comments_enabled,owner_id,created_at').in('id', ids).eq('type', 'channel');
-    if (spacesResult.error) { fail('Не удалось проверить каналы: ' + spacesResult.error.message); return; }
-    var channels = (spacesResult.data || []).filter(function (s) { return !s.is_archived; });
-    if (!channels.length) {
-      FEED = [];
-      box.innerHTML = '<div class="card empty"><h3>Вы пока не подписаны на каналы</h3><p>Найдите каналы и подпишитесь, чтобы видеть их публикации в ленте.</p><button class="btn primary" id="feedFindChannelsEmpty">Найти каналы</button></div>';
-      var findNoChannels = $('#feedFindChannelsEmpty');
-      if (findNoChannels) findNoChannels.onclick = function () { showTab('spaces'); };
-      return;
-    }
-
-    var channelIds = channels.map(function (s) { return s.id; });
-    var postsResult = await sb.from('posts').select(POST_SELECT).in('space_id', channelIds)
-      .order('created_at', { ascending: false }).limit(60);
-    if (postsResult.error) { fail('Лента не загрузилась: ' + postsResult.error.message); return; }
-
-    var spacesById = {};
-    channels.forEach(function (s) { spacesById[s.id] = s; });
+    var spacesResult = await sb.from('spaces').select('id,name,avatar_url,is_archived,type,description,privacy,comments_enabled,owner_id,created_at').in('id',ids).eq('type','channel');
+    if (spacesResult.error) throw spacesResult.error;
+    var channels = (spacesResult.data || []).filter(function(x){return !x.is_archived;});
+    if (!channels.length) { FEED=[]; await cachePut('feed','main',[]); box.innerHTML='<div class="card empty"><h3>Вы пока не подписаны на каналы</h3><p>Найдите каналы и подпишитесь, чтобы видеть их публикации в ленте.</p></div>'; return; }
+    var channelIds = channels.map(function(x){return x.id;});
+    var postsResult = await sb.from('posts').select(POST_SELECT).in('space_id',channelIds).order('created_at',{ascending:false}).limit(60);
+    if (postsResult.error) throw postsResult.error;
+    var byId = {}; channels.forEach(function(x){byId[x.id]=x;});
     FEED = postsResult.data || [];
-    FEED.forEach(function (p) { p._space = spacesById[p.space_id] || null; p._spaceName = (p._space && p._space.name) || 'Канал'; });
+    FEED.forEach(function(p){p._space=byId[p.space_id]||null;p._spaceName=(p._space&&p._space.name)||'Канал';});
+    await cachePut('feed','main',FEED.slice(0,5));
     await signPaths(FEED);
-    var avatarItems = FEED.reduce(function (a, p) { a.push(p.author || {}); if (p._space) a.push({display_name:p._space.name,avatar_url:p._space.avatar_url}); (p.comments || []).forEach(function (c) { a.push(c.author || {}); }); return a; }, []);
-    await signAvatarPaths(avatarItems);
-
-    box.innerHTML = FEED.length ? FEED.map(postHtml).join('')
-      : '<div class="card empty"><h3>Новых публикаций пока нет</h3><p>Вы подписаны на ' + channels.length + ' канал(а). Когда там появятся посты, они отобразятся здесь.</p><button class="btn ghost" id="feedOpenChannels">Мои каналы</button></div>';
-    var openChannels = $('#feedOpenChannels');
-    if (openChannels) openChannels.onclick = function () { showTab('spaces'); };
-  } catch (e) { fail(e.message || e); }
+    var avatars = FEED.reduce(function(a,p){a.push(p.author||{});if(p._space)a.push({display_name:p._space.name,avatar_url:p._space.avatar_url});(p.comments||[]).forEach(function(c){a.push(c.author||{});});return a;},[]);
+    await signAvatarPaths(avatars);
+    if (!ME || ME.id !== userId) return;
+    box.innerHTML = FEED.length ? FEED.map(postHtml).join('') : '<div class="card empty"><h3>Новых публикаций пока нет</h3><p>Вы подписаны на '+channels.length+' канал(а). Когда там появятся посты, они отобразятся здесь.</p><button class="btn ghost" id="feedOpenChannels">Мои каналы</button></div>';
+    var oc=$('#feedOpenChannels'); if(oc) oc.onclick=function(){showTab('spaces');};
+  } catch(e) { if (ME && ME.id===userId) fail(e.message || e); }
 }
-
 async function loadSpacePosts() {
   var box = $('#spacePosts');
-  if (!box || !CURRENT_SPACE) return;
-  var r = await sb.from('posts').select(POST_SELECT).eq('space_id', CURRENT_SPACE.id)
-    .order('created_at', { ascending: false }).limit(60);
-  if (r.error) { box.innerHTML = '<div class="card sub">' + esc(r.error.message) + '</div>'; return; }
-  var rows = r.data || [];
-  await signPaths(rows);
-  rows.forEach(function (p) { p._space = CURRENT_SPACE; p._spaceName = CURRENT_SPACE.name; });
-  var avatarItems = rows.reduce(function (a, p) { a.push(p.author || {}, {display_name:CURRENT_SPACE.name,avatar_url:CURRENT_SPACE.avatar_url}); (p.comments || []).forEach(function (c) { a.push(c.author || {}); }); return a; }, []);
-  await signAvatarPaths(avatarItems);
-  box.innerHTML = rows.length ? rows.map(postHtml).join('') : '<div class="card sub">Публикаций пока нет.</div>';
-  await markSpaceRead(CURRENT_SPACE.id);
+  if (!box || !CURRENT_SPACE || !ME) return;
+  var space = CURRENT_SPACE, userId = ME.id;
+  var key = space.id;
+  try {
+    var cached = await cacheGet('space-posts', key);
+    if (cached && CURRENT_SPACE && CURRENT_SPACE.id === key && ME && ME.id === userId) {
+      var cachedRows = cached;
+      await signPaths(cachedRows);
+      cachedRows.forEach(function(p){p._space=space;p._spaceName=space.name;});
+      var ca = cachedRows.reduce(function(a,p){a.push(p.author||{},{display_name:space.name,avatar_url:space.avatar_url});(p.comments||[]).forEach(function(c){a.push(c.author||{});});return a;},[]);
+      await signAvatarPaths(ca);
+      if (CURRENT_SPACE && CURRENT_SPACE.id === key) box.innerHTML = cachedRows.length ? cachedRows.map(postHtml).join('') : '<div class="card sub">Публикаций пока нет.</div>';
+    }
+    var r = await sb.from('posts').select(POST_SELECT).eq('space_id',key).order('created_at',{ascending:false}).limit(60);
+    if (r.error) throw r.error;
+    var rows = r.data || [];
+    await cachePut('space-posts',key,rows.slice(0,5));
+    await signPaths(rows);
+    rows.forEach(function(p){p._space=space;p._spaceName=space.name;});
+    var avatars = rows.reduce(function(a,p){a.push(p.author||{},{display_name:space.name,avatar_url:space.avatar_url});(p.comments||[]).forEach(function(c){a.push(c.author||{});});return a;},[]);
+    await signAvatarPaths(avatars);
+    if (!CURRENT_SPACE || CURRENT_SPACE.id !== key || !ME || ME.id !== userId) return;
+    box.innerHTML = rows.length ? rows.map(postHtml).join('') : '<div class="card sub">Публикаций пока нет.</div>';
+    await markSpaceRead(key);
+  } catch(e) { if (CURRENT_SPACE && CURRENT_SPACE.id === key) box.innerHTML = '<div class="card sub">' + esc(e.message || e) + '</div>'; }
 }
-
 async function publishPost(spaceId) {
   try {
     if (!ME) return toast('Сначала войдите в аккаунт');
@@ -901,6 +1173,7 @@ function spaceSectionHtml(title, hint, items, emptyText) {
 }
 
 function renderSpaceList() {
+  document.body.classList.remove('channel-open');
   CURRENT_SPACE = null;
   var input = $('#spaceSearchInput');
   var term = input ? input.value.trim() : '';
@@ -945,55 +1218,355 @@ async function uploadSpaceAvatar(space, file) {
 async function openSpace(s) {
   CURRENT_SPACE = s;
   await signAvatarPaths([{display_name:s.name,avatar_url:s.avatar_url}]);
+
   var localAdmin = s._myRole === 'owner' || (s._myRole === 'admin' && !isStaff());
   var adm = localAdmin || isStaff();
   var canPost = s.type === 'channel' ? localAdmin : (!!s._myRole || isStaff());
 
-  var html = '<div class="card space-header-card"><div class="space-header-actions">' +
+  if (s.type === 'channel') {
+    document.body.classList.add('channel-open');
+  } else {
+    document.body.classList.remove('channel-open');
+  }
+
+  /* Новый интерфейс только для каналов */
+  if (s.type === 'channel') {
+    var channelAvatar = s.avatar_url
+      ? avatarMarkup({display_name:s.name,avatar_url:s.avatar_url}, 'space-avatar')
+      : ini(s.name);
+
+    var html = '<div class="channel-layout">' +
+
+      '<section id="channelMainScreen">' +
+        '<header class="channel-topbar">' +
+          '<button class="channel-back" data-back-spaces="1" aria-label="Назад">←</button>' +
+          '<button class="channel-identity" data-channel-info-open="1">' +
+            '<span class="channel-avatar">' + channelAvatar + '</span>' +
+            '<span class="channel-identity-text">' +
+              '<b>' + esc(s.name) + '</b>' +
+              '<small>' + nf(s._count) + ' подписчиков</small>' +
+            '</span>' +
+          '</button>' +
+          '<div class="channel-top-actions">' +
+            (!s._myRole ? (s._pending
+              ? '<span class="badge gray">Заявка отправлена</span>'
+              : '<button class="btn primary" data-join="' + s.id + '">Подписаться</button>') : '') +
+            (adm ? '<button class="channel-menu-button" id="spaceManageToggle" aria-label="Управление">⋯</button>' : '') +
+          '</div>' +
+        '</header>' +
+
+        '<div id="spacePosts" class="channel-feed"></div>' +
+
+        (canPost
+          ? '<section class="channel-composer" id="channelComposer">' +
+              '<div class="channel-composer-main">' +
+                '<textarea id="spaceComposerText" rows="2" placeholder="Публикация…"></textarea>' +
+              '</div>' +
+              '<div class="channel-composer-bottom">' +
+                '<div class="channel-composer-tools">' +
+                  '<label title="Добавить фото">▧<input type="file" id="spacePickPhoto" accept="image/*" multiple hidden></label>' +
+                  '<label title="Прикрепить файл">↥<input type="file" id="spacePickFile" multiple hidden></label>' +
+                  '<label class="channel-comments-option"><input type="checkbox" id="spaceAllowComments"' +
+                    (s.comments_enabled ? ' checked' : '') + '> Комментарии</label>' +
+                '</div>' +
+                '<button class="btn primary" id="spacePublish">Опубликовать</button>' +
+              '</div>' +
+              '<div class="staged" id="stagedSpace"></div>' +
+            '</section>'
+          : (!s._myRole
+              ? '<div class="channel-subscribe-hint">Подпишитесь на канал, чтобы следить за публикациями</div>'
+              : '')) +
+      '</section>' +
+
+      '<section id="channelInfoScreen" class="channel-info-screen" hidden>' +
+        '<header class="channel-info-topbar">' +
+          '<button class="channel-back" id="channelInfoClose">←</button>' +
+          '<b>Информация о канале</b>' +
+        '</header>' +
+        '<div class="channel-info-content">' +
+          '<div class="channel-info-avatar">' + channelAvatar + '</div>' +
+          '<h2>' + esc(s.name) + '</h2>' +
+          '<div class="sub">' + nf(s._count) + ' подписчиков</div>' +
+          (s.description ? '<p class="channel-info-description">' + esc(s.description) + '</p>' : '<p class="sub">Описание канала не добавлено</p>') +
+          (!s._myRole
+            ? (s._pending
+                ? '<span class="badge gray">Заявка отправлена</span>'
+                : '<button class="btn primary channel-info-subscribe" data-join="' + s.id + '">Подписаться</button>')
+            : '<span class="badge gray">Вы подписаны</span>') +
+          (adm ? '<button class="btn ghost channel-info-manage" id="channelInfoManage">Управление каналом</button>' : '') +
+        '</div>' +
+      '</section>';
+
+    if (adm) {
+      html += '<section class="card space-manage-panel channel-manage-panel" id="spaceManagePanel" hidden>' +
+        '<div class="space-manage-heading"><h3>Управление каналом</h3>' +
+          '<button class="btn ghost" id="spaceManageClose">Закрыть</button></div>' +
+        '<div class="space-manage-tabs">' +
+          '<button class="btn primary" data-space-section="basic">Основное</button>' +
+          '<button class="btn ghost" data-space-section="members">Участники</button>' +
+          (localAdmin ? '<button class="btn ghost" data-space-section="requests">Заявки</button>' : '') +
+        '</div>' +
+        '<div class="space-manage-section" id="spaceSectionBasic">' +
+          (localAdmin
+            ? '<label class="space-manage-label">Название канала<input id="spaceEditName" maxlength="80" value="' + esc(s.name) + '"></label>' +
+              '<label class="space-manage-label">Описание<textarea id="spaceEditDescription" rows="3" maxlength="500">' + esc(s.description || '') + '</textarea></label>' +
+              '<div class="space-manage-actions">' +
+                '<label class="btn ghost space-avatar-change">Изменить аватар<input type="file" id="spaceAvatarPick" accept="image/*" hidden></label>' +
+                '<button class="btn ghost" data-invite="' + s.id + '">Ссылка-приглашение</button>' +
+                '<button class="btn primary" id="spaceSaveSettings">Сохранить изменения</button>' +
+                '<button class="btn ghost" data-del-space="' + s.id + '">Удалить канал</button>' +
+              '</div>'
+            : '<p class="sub">У вас есть права модератора участников этого канала.</p>') +
+        '</div>' +
+        '<div class="space-manage-section" id="spaceSectionMembers" hidden>' +
+          '<h4>Участники и администраторы</h4><div id="memberList" class="sub">Нажмите, чтобы загрузить список.</div>' +
+        '</div>' +
+        (localAdmin
+          ? '<div class="space-manage-section" id="spaceSectionRequests" hidden>' +
+              '<h4>Заявки на вступление</h4><div id="requestList" class="sub">Нажмите, чтобы загрузить заявки.</div>' +
+            '</div>'
+          : '') +
+      '</section>';
+    }
+
+    html += '</div>';
+    $('#spaceView').innerHTML = html;
+
+    if ($('#spacePublish')) $('#spacePublish').onclick = function () { publishPost(s.id); };
+    if ($('#spacePickPhoto')) $('#spacePickPhoto').onchange = function () { addStaged(this.files); this.value = ''; };
+    if ($('#spacePickFile')) $('#spacePickFile').onchange = function () { addStaged(this.files); this.value = ''; };
+
+    if ($('#channelInfoClose')) {
+      $('#channelInfoClose').onclick = function () {
+        $('#channelInfoScreen').hidden = true;
+        $('#channelMainScreen').hidden = false;
+      };
+    }
+
+    $$('[data-channel-info-open]').forEach(function (button) {
+      button.onclick = function () {
+        $('#channelMainScreen').hidden = true;
+        $('#channelInfoScreen').hidden = false;
+      };
+    });
+
+    if ($('#channelInfoManage')) {
+      $('#channelInfoManage').onclick = function () {
+        $('#channelInfoScreen').hidden = true;
+        $('#channelMainScreen').hidden = false;
+        $('#spaceManagePanel').hidden = false;
+      };
+    }
+
+    if ($('#spaceManageToggle')) {
+      $('#spaceManageToggle').onclick = function () {
+        $('#spaceManagePanel').hidden = false;
+      };
+
+      $('#spaceManageClose').onclick = function () {
+        $('#spaceManagePanel').hidden = true;
+      };
+
+      $$('[data-space-section]').forEach(function (button) {
+        button.onclick = function () {
+          var section = button.dataset.spaceSection;
+
+          ['basic','members','requests'].forEach(function (name) {
+            var el = $('#spaceSection' + name.charAt(0).toUpperCase() + name.slice(1));
+            if (el) el.hidden = name !== section;
+          });
+
+          $$('[data-space-section]').forEach(function (b) {
+            b.className = 'btn ' + (b === button ? 'primary' : 'ghost');
+          });
+
+          if (section === 'members') {
+            var box = $('#memberList');
+            if (box && box.dataset.loaded !== '1') {
+              box.textContent = 'Загрузка…';
+              loadMembers(s.id, true).then(function () {
+                if (box.isConnected) box.dataset.loaded = '1';
+              });
+            }
+          }
+
+          if (section === 'requests') {
+            var box = $('#requestList');
+            if (box && box.dataset.loaded !== '1') {
+              box.textContent = 'Загрузка…';
+              loadRequests(s.id).then(function () {
+                if (box.isConnected) box.dataset.loaded = '1';
+              });
+            }
+          }
+        };
+      });
+    }
+
+    if ($('#spaceSaveSettings')) {
+      $('#spaceSaveSettings').onclick = async function () {
+        var name = $('#spaceEditName').value.trim();
+        var description = $('#spaceEditDescription').value.trim();
+        if (!name) return toast('Введите название канала');
+
+        var save = await sb.from('spaces').update({
+          name: name,
+          description: description
+        }).eq('id', s.id);
+
+        if (save.error) return fail('Не удалось сохранить изменения: ' + save.error.message);
+
+        s.name = name;
+        s.description = description;
+        CURRENT_SPACE = s;
+        toast('Настройки канала сохранены');
+        await openSpace(s);
+      };
+    }
+
+    if ($('#spaceAvatarPick')) {
+      $('#spaceAvatarPick').onchange = async function () {
+        var f = this.files && this.files[0];
+        this.value = '';
+        if (f) await uploadSpaceAvatar(s, f);
+      };
+    }
+
+    loadSpacePosts();
+    return;
+  }
+
+  /* Прежний интерфейс сообществ — без изменений */
+  var html = '<div class="card space-header-card">' +
+    '<div class="space-header-actions">' +
     '<button class="btn ghost" data-back-spaces="1">← К списку каналов</button>' +
     '<div class="row gap wrap">' +
     (!s._myRole ? (s._pending
       ? '<span class="badge gray">Заявка отправлена</span>'
-      : '<button class="btn primary" data-join="' + s.id + '">' + (s.privacy === 'private' ? 'Запросить доступ' : (s.type === 'channel' ? 'Подписаться' : 'Вступить')) + '</button>') : '') +
-    (localAdmin ? '<label class="btn ghost space-avatar-change">Аватар канала<input type="file" id="spaceAvatarPick" accept="image/*" hidden></label><button class="btn ghost" data-invite="' + s.id + '">Ссылка-приглашение</button>' : '') +
+      : '<button class="btn primary" data-join="' + s.id + '">' +
+        (s.privacy === 'private' ? 'Запросить доступ' : 'Вступить') +
+        '</button>') : '') +
+    (adm ? '<button class="btn primary" id="spaceManageToggle">Управление</button>' : '') +
     (adm ? '<button class="btn ghost" data-del-space="' + s.id + '">Удалить</button>' : '') +
     '</div></div>' +
-    '<div class="space-row space-profile"><div class="space-ico">' + (s.avatar_url ? avatarMarkup({display_name:s.name,avatar_url:s.avatar_url}, 'space-avatar') : ini(s.name)) + '</div><div class="grow">' +
-    '<div class="space-title-line"><b>' + esc(s.name) + '</b> <span class="badge gray">' + (s.type === 'channel' ? 'Канал' : 'Сообщество') + '</span></div>' +
-    '<div class="sub">' + nf(s._count) + ' участников · ' + (s.comments_enabled ? 'комментарии включены' : 'комментарии отключены') + '</div>' +
-    (s.description ? '<div class="space-description">' + esc(s.description) + '</div>' : '') + '</div></div></div>';
+    '<div class="space-row space-profile">' +
+    '<div class="space-ico">' +
+    (s.avatar_url ? avatarMarkup({display_name:s.name,avatar_url:s.avatar_url}, 'space-avatar') : ini(s.name)) +
+    '</div><div class="grow">' +
+    '<div class="space-title-line"><b>' + esc(s.name) + '</b> ' +
+    '<span class="badge gray">Сообщество</span></div>' +
+    '<div class="sub">' + nf(s._count) + ' участников · ' +
+    (s.comments_enabled ? 'комментарии включены' : 'комментарии отключены') + '</div>' +
+    (s.description ? '<div class="space-description">' + esc(s.description) + '</div>' : '') +
+    '</div></div></div>';
+
+  if (adm) {
+    html += '<section class="card space-manage-panel" id="spaceManagePanel" hidden>' +
+      '<div class="space-manage-heading"><h3>Управление сообществом</h3>' +
+      '<button class="btn ghost" id="spaceManageClose">Закрыть</button></div>' +
+      '<div class="space-manage-tabs">' +
+      '<button class="btn primary" data-space-section="basic">Основное</button>' +
+      '<button class="btn ghost" data-space-section="members">Участники</button>' +
+      (localAdmin ? '<button class="btn ghost" data-space-section="requests">Заявки</button>' : '') +
+      '</div>' +
+      '<div class="space-manage-section" id="spaceSectionBasic">' +
+      (localAdmin
+        ? '<label class="space-manage-label">Название<input id="spaceEditName" maxlength="80" value="' + esc(s.name) + '"></label>' +
+          '<label class="space-manage-label">Описание<textarea id="spaceEditDescription" rows="3" maxlength="500">' + esc(s.description || '') + '</textarea></label>' +
+          '<div class="space-manage-actions">' +
+          '<label class="btn ghost space-avatar-change">Изменить аватар<input type="file" id="spaceAvatarPick" accept="image/*" hidden></label>' +
+          '<button class="btn ghost" data-invite="' + s.id + '">Ссылка-приглашение</button>' +
+          '<button class="btn primary" id="spaceSaveSettings">Сохранить изменения</button></div>'
+        : '<p class="sub">У вас есть права модератора участников этого сообщества.</p>') +
+      '</div>' +
+      '<div class="space-manage-section" id="spaceSectionMembers" hidden>' +
+      '<h4>Участники и администраторы</h4><div id="memberList" class="sub">Нажмите, чтобы загрузить список.</div></div>' +
+      (localAdmin ? '<div class="space-manage-section" id="spaceSectionRequests" hidden>' +
+        '<h4>Заявки на вступление</h4><div id="requestList" class="sub">Нажмите, чтобы загрузить заявки.</div></div>' : '') +
+      '</section>';
+  }
 
   if (canPost) {
     html += '<section class="card space-composer-card">' +
-      '<div class="space-composer-heading"><div><h3>Новая публикация</h3><p>Поделитесь новостью или задайте вопрос участникам</p></div></div>' +
+      '<div class="space-composer-heading"><div><h3>Новая публикация</h3>' +
+      '<p>Поделитесь новостью или задайте вопрос участникам</p></div></div>' +
       '<textarea id="spaceComposerText" class="space-composer-text" rows="4" placeholder="О чём хотите рассказать?"></textarea>' +
       '<div class="staged" id="stagedSpace"></div>' +
       '<div class="space-composer-footer"><div class="space-composer-tools">' +
-      '<label class="space-tool"><input type="file" id="spacePickPhoto" accept="image/*" multiple hidden><span aria-hidden="true">▧</span> Фото</label>' +
-      '<label class="space-tool"><input type="file" id="spacePickFile" multiple hidden><span aria-hidden="true">↥</span> Файл</label>' +
-      '<label class="space-comments-toggle"><input type="checkbox" id="spaceAllowComments"' + (s.comments_enabled ? ' checked' : '') + '> Комментарии</label>' +
+      '<label class="space-tool"><input type="file" id="spacePickPhoto" accept="image/*" multiple hidden><span>▧</span> Фото</label>' +
+      '<label class="space-tool"><input type="file" id="spacePickFile" multiple hidden><span>↥</span> Файл</label>' +
+      '<label class="space-comments-toggle"><input type="checkbox" id="spaceAllowComments"' +
+      (s.comments_enabled ? ' checked' : '') + '> Комментарии</label>' +
       '</div><button class="btn primary space-publish-btn" id="spacePublish">Опубликовать</button></div>' +
       '<div class="space-composer-note">Можно прикрепить фото или файл размером до 100 МБ</div></section>';
   }
 
-  // Список участников и инструменты управления доступны только владельцу/администратору пространства
-  // или глобальной команде проекта.
-  if (adm) {
-    html += '<div class="card"><h3>Участники и управление</h3><div id="memberList" class="sub">Загрузка…</div></div>';
-  }
-  if (localAdmin) {
-    html += '<div class="card"><h3>Заявки на вступление</h3><div id="requestList" class="sub">Загрузка…</div></div>';
-  }
   html += '<div id="spacePosts"></div>';
-
   $('#spaceView').innerHTML = html;
+
   if ($('#spacePublish')) $('#spacePublish').onclick = function () { publishPost(s.id); };
   if ($('#spacePickPhoto')) $('#spacePickPhoto').onchange = function () { addStaged(this.files); this.value = ''; };
   if ($('#spacePickFile')) $('#spacePickFile').onchange = function () { addStaged(this.files); this.value = ''; };
-  if ($('#spaceAvatarPick')) $('#spaceAvatarPick').onchange = async function () { var f = this.files && this.files[0]; this.value = ''; if (f) await uploadSpaceAvatar(s, f); };
+
+  if ($('#spaceManageToggle')) {
+    $('#spaceManageToggle').onclick = function () {
+      var panel = $('#spaceManagePanel');
+      panel.hidden = !panel.hidden;
+    };
+    $('#spaceManageClose').onclick = function () { $('#spaceManagePanel').hidden = true; };
+
+    $$('[data-space-section]').forEach(function (button) {
+      button.onclick = function () {
+        var section = button.dataset.spaceSection;
+        ['basic','members','requests'].forEach(function (name) {
+          var el = $('#spaceSection' + name.charAt(0).toUpperCase() + name.slice(1));
+          if (el) el.hidden = name !== section;
+        });
+        $$('[data-space-section]').forEach(function (b) {
+          b.className = 'btn ' + (b === button ? 'primary' : 'ghost');
+        });
+        if (section === 'members') {
+          var box = $('#memberList');
+          if (box && box.dataset.loaded !== '1') {
+            box.textContent = 'Загрузка…';
+            loadMembers(s.id, true).then(function () { if (box.isConnected) box.dataset.loaded = '1'; });
+          }
+        }
+        if (section === 'requests') {
+          var box = $('#requestList');
+          if (box && box.dataset.loaded !== '1') {
+            box.textContent = 'Загрузка…';
+            loadRequests(s.id).then(function () { if (box.isConnected) box.dataset.loaded = '1'; });
+          }
+        }
+      };
+    });
+  }
+
+  if ($('#spaceSaveSettings')) {
+    $('#spaceSaveSettings').onclick = async function () {
+      var name = $('#spaceEditName').value.trim();
+      var description = $('#spaceEditDescription').value.trim();
+      if (!name) return toast('Введите название канала');
+      var save = await sb.from('spaces').update({ name:name, description:description }).eq('id', s.id);
+      if (save.error) return fail('Не удалось сохранить изменения: ' + save.error.message);
+      s.name = name;
+      s.description = description;
+      CURRENT_SPACE = s;
+      toast('Настройки сохранены');
+      await openSpace(s);
+    };
+  }
+
+  if ($('#spaceAvatarPick')) {
+    $('#spaceAvatarPick').onchange = async function () {
+      var f = this.files && this.files[0];
+      this.value = '';
+      if (f) await uploadSpaceAvatar(s, f);
+    };
+  }
+
   loadSpacePosts();
-  if (adm) loadMembers(s.id, true);
-  if (localAdmin) loadRequests(s.id);
 }
 async function loadMembers(spaceId, admin) {
   var box = $('#memberList');
@@ -1092,62 +1665,73 @@ $('#createSpace').onclick = async function () {
 
 /* ================= ЧАТЫ ================= */
 async function loadConversations() {
+  if (!ME) return;
+  var requestId = ++CONV_LOAD_SEQ;
+  var userId = ME.id;
   try {
-    var mem = await sb.from('conversation_members').select('conversation_id').eq('user_id', ME.id);
-    var ids = (mem.data || []).map(function (m) { return m.conversation_id; });
-    var all = { data: [] };
-    CONVS = [];
-
+    var cached = await cacheGet('conversations', 'all');
+    if (cached && requestId === CONV_LOAD_SEQ && ME && ME.id === userId) {
+      CONVS = cached;
+      renderConvList();
+    }
+    var mem = await sb.from('conversation_members').select('conversation_id').eq('user_id', userId);
+    if (mem.error) throw mem.error;
+    if (requestId !== CONV_LOAD_SEQ || !ME || ME.id !== userId) return;
+    var ids = Array.from(new Set((mem.data || []).map(function (m) { return m.conversation_id; }).filter(Boolean)));
+    var all = { data: [] }, conversations = [];
     if (ids.length) {
       var cs = await sb.from('conversations').select('id,is_support,owner_user').in('id', ids);
-      all = await sb.from('conversation_members')
-        .select('conversation_id,user_id,profiles(display_name,username,avatar_url)').in('conversation_id', ids);
+      if (cs.error) throw cs.error;
+      all = await sb.from('conversation_members').select('conversation_id,user_id,profiles(display_name,username,avatar_url)').in('conversation_id', ids);
+      if (all.error) throw all.error;
+      if (requestId !== CONV_LOAD_SEQ || !ME || ME.id !== userId) return;
+      var unique = new Map();
       (cs.data || []).forEach(function (c) {
-        var others = (all.data || []).filter(function (m) { return m.conversation_id === c.id && m.user_id !== ME.id; });
+        if (!c || !c.id || unique.has(c.id)) return;
+        var others = (all.data || []).filter(function (m) { return m.conversation_id === c.id && m.user_id !== userId; });
         var o = others[0] || {};
-        CONVS.push({
-          id: c.id, is_support: c.is_support, owner_user: c.owner_user,
-          title: c.is_support ? 'Чат поддержки' : ((o.profiles || {}).display_name || 'Диалог'),
-          sub: c.is_support ? 'Обращение к владельцу и совладельцам' : '@' + ((o.profiles || {}).username || '—'),
-          target: o.user_id || null, _profile: o.profiles || {}
-        });
+        unique.set(c.id, { id:c.id, is_support:c.is_support, owner_user:c.owner_user,
+          title:c.is_support ? 'Чат поддержки' : ((o.profiles || {}).display_name || 'Диалог'),
+          sub:c.is_support ? 'Обращение в поддержку' : '@' + ((o.profiles || {}).username || '—'),
+          target:o.user_id || null, _profile:o.profiles || {} });
       });
+      conversations = Array.from(unique.values());
     }
-
     if (isStaff()) {
-      var sup = await sb.from('conversations')
-        .select('id,is_support,owner_user,profiles!conversations_owner_user_fkey(display_name,username)')
-        .eq('is_support', true);
+      var sup = await sb.from('conversations').select('id,is_support,owner_user,profiles!conversations_owner_user_fkey(display_name,username)').eq('is_support', true);
+      if (sup.error) throw sup.error;
+      if (requestId !== CONV_LOAD_SEQ || !ME || ME.id !== userId) return;
       (sup.data || []).forEach(function (c) {
-        if (CONVS.some(function (x) { return x.id === c.id; })) return;
+        if (!c || !c.id || conversations.some(function (x) { return x.id === c.id; })) return;
         var p = c.profiles || {};
-        CONVS.push({
-          id: c.id, is_support: true, owner_user: c.owner_user, staffView: true,
-          title: 'Поддержка: ' + (p.display_name || 'пользователь'),
-          sub: '@' + (p.username || '—'), target: c.owner_user
-        });
+        conversations.push({ id:c.id, is_support:true, owner_user:c.owner_user, staffView:true,
+          title:'Поддержка: ' + (p.display_name || 'пользователь'), sub:'@' + (p.username || '—'), target:c.owner_user });
       });
     }
     await signAvatarPaths((all.data || []).map(function (m) { return m.profiles || {}; }));
+    if (requestId !== CONV_LOAD_SEQ || !ME || ME.id !== userId) return;
+    CONVS = conversations;
+    await cachePut('conversations', 'all', CONVS);
     CONV_UNREAD = {};
     var convIds = CONVS.filter(function (c) { return !c.staffView; }).map(function (c) { return c.id; });
     if (convIds.length) {
-      var cc = await sb.from('notification_cursors').select('scope_id,last_seen_at').eq('user_id', ME.id)
-        .eq('scope_type', 'conversation').in('scope_id', convIds);
+      var cc = await sb.from('notification_cursors').select('scope_id,last_seen_at').eq('user_id', userId).eq('scope_type', 'conversation').in('scope_id', convIds);
+      if (cc.error) throw cc.error;
+      if (requestId !== CONV_LOAD_SEQ || !ME || ME.id !== userId) return;
       var cm = {};
       (cc.data || []).forEach(function (v) { cm[v.scope_id] = v.last_seen_at; });
       var fresh = convIds.filter(function (id) { return !cm[id]; });
       for (var ci = 0; ci < fresh.length; ci++) { await markRead('conversation', fresh[ci]); cm[fresh[ci]] = new Date().toISOString(); }
-      var msgs = await sb.from('messages').select('conversation_id,sender_id,created_at')
-        .in('conversation_id', convIds).neq('sender_id', ME.id).order('created_at', { ascending: false }).limit(500);
+      var msgs = await sb.from('messages').select('conversation_id,sender_id,created_at').in('conversation_id', convIds).neq('sender_id', userId).order('created_at', { ascending: false }).limit(500);
+      if (msgs.error) throw msgs.error;
+      if (requestId !== CONV_LOAD_SEQ || !ME || ME.id !== userId) return;
       (msgs.data || []).forEach(function (m) {
         if (new Date(m.created_at) > new Date(cm[m.conversation_id])) CONV_UNREAD[m.conversation_id] = (CONV_UNREAD[m.conversation_id] || 0) + 1;
       });
     }
-    renderConvList();
-  } catch (e) { fail(e.message || e); }
+    if (requestId === CONV_LOAD_SEQ && ME && ME.id === userId) renderConvList();
+  } catch (e) { if (requestId === CONV_LOAD_SEQ) fail(e.message || e); }
 }
-
 function renderConvList() {
   $('#convList').innerHTML = CONVS.length ? CONVS.map(function (c) {
     return '<div class="conv' + (CURRENT_CONV && CURRENT_CONV.id === c.id ? ' on' : '') + '" data-conv="' + c.id + '">' +
@@ -1161,8 +1745,12 @@ function renderConvList() {
 function showMobileChatList() {
   clearInterval(poll);
   poll = null;
+
   $('#pane-chats').classList.remove('chat-selected');
+
+  animateInomestoElement($('.chat-list'), -18, 0, 250);
 }
+
 function renderChatHead() {
   var c = CURRENT_CONV;
   if (!c) { $('#chatHead').textContent = 'Выберите чат'; return; }
@@ -1177,68 +1765,96 @@ function renderChatHead() {
 async function openConv(id) {
   CURRENT_CONV = CONVS.filter(function (c) { return c.id === id; })[0] || null;
   if (!CURRENT_CONV) return;
-  clearInterval(poll); poll = null;
-  renderConvList(); renderChatHead(); $('#pane-chats').classList.add('chat-selected');
+
+  clearInterval(poll);
+  poll = null;
+
+  renderConvList();
+  renderChatHead();
+  $('#pane-chats').classList.add('chat-selected');
+
+  animateInomestoElement($('.chat-window'), 22, 0, 280);
+
   await loadMessages();
+
   if (!CURRENT_CONV || CURRENT_CONV.id !== id) return;
-  await markRead('conversation', id); CONV_UNREAD[id] = 0; renderConvList();
-  poll = setInterval(function () { if (CURRENT_CONV && CURRENT_CONV.id === id) loadMessages(); }, 7000);
+
+  await markRead('conversation', id);
+  CONV_UNREAD[id] = 0;
+  renderConvList();
+
+  poll = setInterval(function () {
+    if (CURRENT_CONV && CURRENT_CONV.id === id) loadMessages();
+  }, 7000);
 }
 
-async function loadMessages() {
-  if (!CURRENT_CONV) return;
-  var conversationId = CURRENT_CONV.id;
-  var r = await sb.from('messages')
-    .select('id,body,attachments,from_support,sender_id,created_at,profiles(display_name)')
-    .eq('conversation_id', conversationId).order('created_at', { ascending: false }).limit(300);
-  if (r.error) { if (CURRENT_CONV && CURRENT_CONV.id === conversationId) $('#messages').innerHTML = '<div class="sub">' + esc(r.error.message) + '</div>'; return; }
-  var messageRows = (r.data || []).reverse();
+async function renderMessageRows(messageRows, conversationId, cachedOnly) {
   if (!CURRENT_CONV || CURRENT_CONV.id !== conversationId) return;
   await signMessagePaths(messageRows);
   if (!CURRENT_CONV || CURRENT_CONV.id !== conversationId) return;
-  var messageIds = messageRows.map(function (m) { return m.id; });
   var reactionMap = {};
+  var messageIds = cachedOnly ? [] : messageRows.map(function(m){return m.id;});
   if (messageIds.length) {
-    var rx = await sb.from('message_reactions').select('message_id,user_id,emoji').in('message_id', messageIds);
-    if (rx.error) console.warn('Реакции не загрузились:', rx.error.message);
-    (rx.data || []).forEach(function (x) {
-      if (!reactionMap[x.message_id]) reactionMap[x.message_id] = {};
-      if (!reactionMap[x.message_id][x.emoji]) reactionMap[x.message_id][x.emoji] = { count: 0, mine: false };
+    var rx = await sb.from('message_reactions').select('message_id,user_id,emoji').in('message_id',messageIds);
+    if (!rx.error) (rx.data || []).forEach(function(x){
+      if(!reactionMap[x.message_id]) reactionMap[x.message_id]={};
+      if(!reactionMap[x.message_id][x.emoji]) reactionMap[x.message_id][x.emoji]={count:0,mine:false};
       reactionMap[x.message_id][x.emoji].count++;
-      if (x.user_id === ME.id) reactionMap[x.message_id][x.emoji].mine = true;
+      if(x.user_id===ME.id) reactionMap[x.message_id][x.emoji].mine=true;
     });
   }
-  var box = $('#messages');
-  var quickReactions = CHAT_REACTIONS.slice(0, 5);
-  box.innerHTML = messageRows.map(function (m) {
-    var mine = m.sender_id === ME.id;
-    var label = m.from_support ? 'Чат поддержки' : ((m.profiles || {}).display_name || 'Участник');
-    var body = esc(m.body || '').replace(/\n/g, '<br>');
-    var files = (m.attachments || []).map(chatAttachmentHtml).join('');
-    var groups = reactionMap[m.id] || {};
-    var reactionHtml = CHAT_REACTIONS.filter(function (emoji) { return !!groups[emoji]; }).map(function (emoji) {
-      var item = groups[emoji];
-      return '<button type="button" class="chat-reaction' + (item.mine ? ' mine' : '') + '" data-react-message="' + m.id + '" data-react-emoji="' + emoji + '" title="Убрать или поставить реакцию">' + emoji + ' <span>' + item.count + '</span></button>';
-    }).join('');
-    var quickHtml = quickReactions.map(function (emoji) {
-      return '<button type="button" class="chat-picker-emoji" data-react-message="' + m.id + '" data-react-emoji="' + emoji + '" aria-label="Поставить реакцию ' + emoji + '">' + emoji + '</button>';
-    }).join('');
-    var allHtml = CHAT_REACTIONS.map(function (emoji) {
-      return '<button type="button" class="chat-picker-emoji" data-react-message="' + m.id + '" data-react-emoji="' + emoji + '" aria-label="Поставить реакцию ' + emoji + '">' + emoji + '</button>';
-    }).join('');
-    return '<div class="bubble' + (mine ? ' mine' : '') + '" data-message-bubble>' +
-      '<div class="chat-reaction-tools">' +
-        '<div class="chat-reaction-quick">' + quickHtml +
-          '<button type="button" class="chat-picker-more" data-react-more aria-label="Показать все эмодзи" title="Все эмодзи">＋</button>' +
-        '</div>' +
-        '<div class="chat-reaction-expanded" hidden>' + allHtml + '</div>' +
-      '</div>' +
-      (body ? '<div class="message-body">' + body + '</div>' : '') + files +
-      '<small>' + (mine ? 'Вы' : esc(label)) + ' · ' + dateF(m.created_at) + '</small>' +
-      (reactionHtml ? '<div class="chat-reactions">' + reactionHtml + '</div>' : '') + '</div>';
+  var box=$('#messages'), quick=CHAT_REACTIONS.slice(0,5);
+  var previousMessageIds = new Set(
+    Array.from(box.querySelectorAll('[data-message-id]')).map(function(el){
+      return el.getAttribute('data-message-id');
+    })
+  );
+
+  box.innerHTML = messageRows.map(function(m){
+    var mine=m.sender_id===ME.id, label=m.from_support?'Чат поддержки':((m.profiles||{}).display_name||'Участник');
+    var body=esc(m.body||'').replace(/\n/g,'<br>'), files=(m.attachments||[]).map(chatAttachmentHtml).join('');
+    var groups=reactionMap[m.id]||{};
+    var reactionHtml=CHAT_REACTIONS.filter(function(e){return !!groups[e];}).map(function(e){var x=groups[e];return '<button class="chat-reaction'+(x.mine?' mine':'')+'" data-react-message="'+m.id+'" data-react-emoji="'+e+'">'+e+' <span>'+x.count+'</span></button>';}).join('');
+    var quickHtml=quick.map(function(e){return '<button class="chat-picker-emoji" data-react-message="'+m.id+'" data-react-emoji="'+e+'">'+e+'</button>';}).join('');
+    var allHtml=CHAT_REACTIONS.map(function(e){return '<button class="chat-picker-emoji" data-react-message="'+m.id+'" data-react-emoji="'+e+'">'+e+'</button>';}).join('');
+    return '<div class="bubble'+(mine?' mine':'')+'" data-message-bubble data-message-id="'+esc(m.id)+'"><div class="chat-reaction-tools"><div class="chat-reaction-quick">'+quickHtml+'<button class="chat-picker-more" data-react-more>＋</button></div><div class="chat-reaction-expanded" hidden>'+allHtml+'</div></div>'+
+      (body?'<div class="message-body">'+body+'</div>':'')+files+'<small>'+(mine?'Вы':esc(label))+' · '+dateF(m.created_at)+'</small>'+
+      (reactionHtml?'<div class="chat-reactions">'+reactionHtml+'</div>':'')+'</div>';
   }).join('') || '<div class="empty">Сообщений пока нет</div>';
-  box.scrollTop = box.scrollHeight;
-  if (CURRENT_CONV && CURRENT_CONV.id === conversationId) { await markRead('conversation', conversationId); CONV_UNREAD[conversationId] = 0; renderConvList(); }
+
+  if (!cachedOnly && previousMessageIds.size) {
+    box.querySelectorAll('[data-message-id]').forEach(function(el){
+      var id = el.getAttribute('data-message-id');
+      if (!previousMessageIds.has(id)) {
+        animateInomestoElement(el, 0, 12, 220);
+      }
+    });
+  }
+
+  box.scrollTop=box.scrollHeight;
+}
+async function loadMessages() {
+  if (!CURRENT_CONV || !ME) return;
+  var conversationId=CURRENT_CONV.id, userId=ME.id;
+  try {
+    var cached=await cacheGet('messages',conversationId);
+    if(cached && CURRENT_CONV && CURRENT_CONV.id===conversationId && ME && ME.id===userId) {
+      await renderMessageRows(cached,conversationId,true);
+    }
+    var r=await sb.from('messages').select('id,body,attachments,from_support,sender_id,created_at,profiles(display_name)')
+      .eq('conversation_id',conversationId).order('created_at',{ascending:false}).limit(300);
+    if(r.error) throw r.error;
+    var messageRows=(r.data||[]).reverse();
+    if(!CURRENT_CONV || CURRENT_CONV.id!==conversationId || !ME || ME.id!==userId) return;
+    await cachePut('messages',conversationId,messageRows.slice(-10));
+    await renderMessageRows(messageRows,conversationId,false);
+    if(CURRENT_CONV && CURRENT_CONV.id===conversationId) { await markRead('conversation',conversationId); CONV_UNREAD[conversationId]=0; renderConvList(); }
+  } catch(e) {
+    if(CURRENT_CONV && CURRENT_CONV.id===conversationId && ME && ME.id===userId) {
+      var existing=$('#messages');
+      if(!existing.innerHTML || existing.innerHTML.indexOf('bubble')<0) existing.innerHTML='<div class="sub">Не удалось загрузить сообщения. '+esc(e.message||e)+'</div>';
+    }
+  }
 }
 function stopVoiceRecording() {
   if (CHAT_RECORD_TIMER) clearTimeout(CHAT_RECORD_TIMER);
@@ -1603,6 +2219,12 @@ $('#saveProfile').onclick = async function () {
 };
 
 $('#saveNotificationPrefs').onclick = saveNotificationPrefs;
+
+$('#themeSelect').onchange = function () {
+  applyTheme(this.value);
+  toast(this.value === 'dark' ? 'Включена тёмная тема' : 'Включена светлая тема');
+};
+
 $('#enableBrowserNotifications').onclick = requestBrowserNotifications;
 
 /* ================= ЖАЛОБЫ ================= */
@@ -1876,8 +2498,207 @@ async function checkInvite() {
   loadSpaces();
 }
 
+
+/* ===== INOMESTO SPLASH ANIMATION ===== */
+
+function startInomestoSplash() {
+  var splash = document.getElementById('inomestoSplash');
+  var stage = document.getElementById('splashStage');
+  var word = document.getElementById('splashWord');
+  var logo = document.getElementById('splashLogo');
+
+  if (!splash || !stage || !word || !logo) {
+    window.__inomestoSplashPromise = Promise.resolve();
+    return;
+  }
+
+  var reduced = window.matchMedia &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  if (!reduced || !Element.prototype.animate) {
+    window.__inomestoSplashPromise = (async function () {
+      var letters = Array.prototype.slice.call(
+        word.querySelectorAll('.splash-letter')
+      );
+
+      // 1. Название плавно въезжает справа.
+      var intro = word.animate([
+        {
+          transform: 'translate3d(68vw,0,0)',
+          opacity: 0
+        },
+        {
+          transform: 'translate3d(0,0,0)',
+          opacity: 1
+        }
+      ], {
+        duration: 1050,
+        easing: 'cubic-bezier(.16,1,.3,1)',
+        fill: 'forwards'
+      });
+
+      await intro.finished;
+      word.style.transform = 'translateX(0)';
+      intro.cancel();
+
+      // 2. Название немного смещается, освобождая место знаку.
+      var shift = word.animate([
+        { transform: 'translateX(0)' },
+        { transform: 'translateX(30px)' }
+      ], {
+        duration: 420,
+        easing: 'cubic-bezier(.22,1,.36,1)',
+        fill: 'forwards'
+      });
+
+      await shift.finished;
+      word.style.transform = 'translateX(30px)';
+      shift.cancel();
+
+      // 3. Логотип начинает движение над верхней частью надписи.
+      var logoSize = 48;
+      var wordRect = word.getBoundingClientRect();
+      var startX = window.innerWidth + 70;
+
+      // Нижняя грань знака находится чуть выше букв.
+      var baseY = wordRect.top - logoSize + 8;
+
+      logo.style.left = startX + 'px';
+      logo.style.top = baseY + 'px';
+      logo.style.marginTop = '0';
+      logo.style.opacity = '1';
+      logo.style.transform = 'translate3d(0,0,0)';
+
+      var currentDX = 0;
+
+      // Три точки касания — единая непрерывная траектория.
+      var landingIndexes = [7, 4, 1];
+      var frames = [{
+        offset: 0,
+        transform: 'translate3d(0,0,0) rotateY(0deg) rotateZ(0deg)'
+      }];
+
+      for (var k = 0; k < landingIndexes.length; k++) {
+        var i = landingIndexes[k];
+        var rect = letters[i].getBoundingClientRect();
+        var targetX = rect.left + rect.width / 2 - logoSize / 2;
+        var targetDX = targetX - startX;
+
+        var middleDX = currentDX + (targetDX - currentDX) * 0.5;
+        var baseOffset = k / landingIndexes.length;
+        var span = 1 / landingIndexes.length;
+
+        frames.push({
+          offset: baseOffset + span * 0.48,
+          transform:
+            'translate3d(' + middleDX + 'px,-66px,0) ' +
+            'rotateY(' + (k * 360 + 180) + 'deg) ' +
+            'rotateZ(' + (k * 360 + 180) + 'deg)'
+        });
+
+        frames.push({
+          offset: baseOffset + span * 0.84,
+          transform:
+            'translate3d(' +
+            (currentDX + (targetDX - currentDX) * 0.88) +
+            'px,-17px,0) ' +
+            'rotateY(' + (k * 360 + 315) + 'deg) ' +
+            'rotateZ(' + (k * 360 + 315) + 'deg)'
+        });
+
+        frames.push({
+          offset: baseOffset + span,
+          transform:
+            'translate3d(' + targetDX + 'px,0,0) ' +
+            'rotateY(' + ((k + 1) * 360) + 'deg) ' +
+            'rotateZ(' + ((k + 1) * 360) + 'deg)'
+        });
+
+        currentDX = targetDX;
+      }
+
+      // Одна анимация: никаких пауз между касаниями букв.
+      var travel = logo.animate(frames, {
+        duration: 1560,
+        easing: 'linear',
+        fill: 'forwards'
+      });
+
+      await travel.finished;
+
+      logo.style.transform =
+        'translate3d(' + currentDX + 'px,0,0)';
+      travel.cancel();
+
+      // 5. Последний прыжок — на место слева от названия.
+      var wordRect = word.getBoundingClientRect();
+      var finalX = wordRect.left - logoSize - 13;
+      var finalY = wordRect.top + (wordRect.height - logoSize) / 2;
+      var finalDX = finalX - startX;
+      var finalDY = finalY - baseY;
+
+      var finish = logo.animate([
+        {
+          transform:
+            'translate3d(' + currentDX + 'px,0,0) rotateY(0deg) rotateZ(0deg)'
+        },
+        {
+          offset: .48,
+          transform:
+            'translate3d(' + ((currentDX + finalDX) / 2) +
+            'px,-54px,0) rotateY(180deg) rotateZ(180deg)'
+        },
+        {
+          transform:
+            'translate3d(' + finalDX + 'px,' + finalDY +
+            'px,0) rotateY(360deg) rotateZ(360deg)'
+        }
+      ], {
+        duration: 430,
+        easing: 'cubic-bezier(.16,1,.3,1)',
+        fill: 'forwards'
+      });
+
+      await finish.finished;
+
+      logo.style.transform =
+        'translate3d(' + finalDX + 'px,' + finalDY + 'px,0)';
+      finish.cancel();
+
+      splash.classList.add('splash-settled');
+    })().catch(function (e) {
+      console.warn('Splash animation:', e);
+    });
+
+  } else {
+    // Уважение системной настройки уменьшения движения.
+    stage.classList.add('is-reduced');
+    word.style.transform = 'translateX(30px)';
+    logo.style.opacity = '1';
+    window.__inomestoSplashPromise = Promise.resolve();
+  }
+}
+
+function finishInomestoSplash() {
+  var splash = document.getElementById('inomestoSplash');
+  if (!splash) return;
+
+  Promise.resolve(window.__inomestoSplashPromise)
+    .catch(function () {})
+    .then(function () {
+      splash.classList.add('splash-dismissed');
+      window.setTimeout(function () {
+        splash.hidden = true;
+      }, 750);
+    });
+}
+
+
+startInomestoSplash();
+
 setupNativeAuth()
   .then(function () { return boot(); })
   .then(checkInvite)
-  .catch(function (e) { fail('Запуск не удался: ' + (e.message || e)); });
+  .catch(function (e) { fail('Запуск не удался: ' + (e.message || e)); })
+  .finally(function () { finishInomestoSplash(); });
 })();
