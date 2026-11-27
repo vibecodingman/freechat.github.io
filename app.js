@@ -73,6 +73,8 @@ var sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, {
 
 var ME = null, STAGED = [], FEED = [], SIGNED = {}, SIGNED_EXPIRES = {}, AVATAR_URLS = {}, AVATAR_URL_EXPIRES = {}, SPACES = [], SPACE_SEARCH_RESULTS = [], SPACE_MY_ROLES = {}, SPACE_PENDING = {}, SPACE_SEARCH_TIMER = null, CONVS = [];
 var CHAT_STAGED = [], CHAT_SENDING = false;
+var CHAT_LAST_MESSAGE_AT = {};
+var CHAT_LOAD_INFLIGHT = {};
 var CONV_LOAD_SEQ = 0;
 var PENDING_PUSH_CONVERSATION_ID = null;
 var PUSH_CHAT_OPENING = false;
@@ -816,9 +818,10 @@ async function afterLogin(user) {
   startNotificationPolling();
   syncStaffUI();
   renderIdentity();
+  var inviteAccepted = await checkInvite();
   if (PENDING_PUSH_CONVERSATION_ID) {
     await openPushConversation(PENDING_PUSH_CONVERSATION_ID);
-  } else {
+  } else if (!inviteAccepted) {
     showTab('feed');
   }
 }
@@ -858,7 +861,8 @@ $('#saveOnboarding').onclick = async function () {
     startNotificationPolling();
     syncStaffUI();
     renderIdentity();
-    showTab('feed');
+    var inviteAccepted = await checkInvite();
+    if (!inviteAccepted) showTab('feed');
   } catch (e) { fail(e.message || e); }
 };
 
@@ -1775,7 +1779,7 @@ async function openConv(id) {
 
   animateInomestoElement($('.chat-window'), 22, 0, 280);
 
-  await loadMessages();
+  await loadMessages(true);
 
   if (!CURRENT_CONV || CURRENT_CONV.id !== id) return;
 
@@ -1788,42 +1792,126 @@ async function openConv(id) {
   }, 7000);
 }
 
-async function renderMessageRows(messageRows, conversationId, cachedOnly) {
+
+function linkifyMessageText(value) {
+  var text = String(value || '');
+  var urlPattern = /https?:\/\/[^\s<>"']+/gi;
+  var result = '';
+  var last = 0;
+  var match;
+
+  while ((match = urlPattern.exec(text)) !== null) {
+    var raw = match[0];
+    var url = raw;
+    var suffix = '';
+
+    while (/[.,!?;:)\]}]$/.test(url)) {
+      suffix = url.slice(-1) + suffix;
+      url = url.slice(0, -1);
+    }
+
+    result += esc(text.slice(last, match.index));
+
+    try {
+      var parsed = new URL(url);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        result += esc(raw);
+      } else {
+        result += '<a class="message-link" href="' + esc(parsed.href) +
+          '" target="_blank" rel="noopener noreferrer">' +
+          esc(url) + '</a>' + esc(suffix);
+      }
+    } catch (_) {
+      result += esc(raw);
+    }
+
+    last = match.index + raw.length;
+  }
+
+  return (result + esc(text.slice(last))).replace(/\n/g, '<br>');
+}
+
+async function renderMessageRows(messageRows, conversationId, cachedOnly, appendOnly) {
   if (!CURRENT_CONV || CURRENT_CONV.id !== conversationId) return;
+
   await signMessagePaths(messageRows);
   if (!CURRENT_CONV || CURRENT_CONV.id !== conversationId) return;
+
   var reactionMap = {};
-  var messageIds = cachedOnly ? [] : messageRows.map(function(m){return m.id;});
+  var messageIds = cachedOnly ? [] : messageRows.map(function(m) { return m.id; });
+
   if (messageIds.length) {
-    var rx = await sb.from('message_reactions').select('message_id,user_id,emoji').in('message_id',messageIds);
-    if (!rx.error) (rx.data || []).forEach(function(x){
-      if(!reactionMap[x.message_id]) reactionMap[x.message_id]={};
-      if(!reactionMap[x.message_id][x.emoji]) reactionMap[x.message_id][x.emoji]={count:0,mine:false};
+    var rx = await sb.from('message_reactions')
+      .select('message_id,user_id,emoji')
+      .in('message_id', messageIds);
+
+    if (!rx.error) (rx.data || []).forEach(function(x) {
+      if (!reactionMap[x.message_id]) reactionMap[x.message_id] = {};
+      if (!reactionMap[x.message_id][x.emoji]) {
+        reactionMap[x.message_id][x.emoji] = { count: 0, mine: false };
+      }
       reactionMap[x.message_id][x.emoji].count++;
-      if(x.user_id===ME.id) reactionMap[x.message_id][x.emoji].mine=true;
+      if (x.user_id === ME.id) reactionMap[x.message_id][x.emoji].mine = true;
     });
   }
-  var box=$('#messages'), quick=CHAT_REACTIONS.slice(0,5);
+
+  var box = $('#messages');
+  var quick = CHAT_REACTIONS.slice(0, 5);
+  var wasAtBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+
   var previousMessageIds = new Set(
-    Array.from(box.querySelectorAll('[data-message-id]')).map(function(el){
+    Array.from(box.querySelectorAll('[data-message-id]')).map(function(el) {
       return el.getAttribute('data-message-id');
     })
   );
 
-  box.innerHTML = messageRows.map(function(m){
-    var mine=m.sender_id===ME.id, label=m.from_support?'Чат поддержки':((m.profiles||{}).display_name||'Участник');
-    var body=esc(m.body||'').replace(/\n/g,'<br>'), files=(m.attachments||[]).map(chatAttachmentHtml).join('');
-    var groups=reactionMap[m.id]||{};
-    var reactionHtml=CHAT_REACTIONS.filter(function(e){return !!groups[e];}).map(function(e){var x=groups[e];return '<button class="chat-reaction'+(x.mine?' mine':'')+'" data-react-message="'+m.id+'" data-react-emoji="'+e+'">'+e+' <span>'+x.count+'</span></button>';}).join('');
-    var quickHtml=quick.map(function(e){return '<button class="chat-picker-emoji" data-react-message="'+m.id+'" data-react-emoji="'+e+'">'+e+'</button>';}).join('');
-    var allHtml=CHAT_REACTIONS.map(function(e){return '<button class="chat-picker-emoji" data-react-message="'+m.id+'" data-react-emoji="'+e+'">'+e+'</button>';}).join('');
-    return '<div class="bubble'+(mine?' mine':'')+'" data-message-bubble data-message-id="'+esc(m.id)+'"><div class="chat-reaction-tools"><div class="chat-reaction-quick">'+quickHtml+'<button class="chat-picker-more" data-react-more>＋</button></div><div class="chat-reaction-expanded" hidden>'+allHtml+'</div></div>'+
-      (body?'<div class="message-body">'+body+'</div>':'')+files+'<small>'+(mine?'Вы':esc(label))+' · '+dateF(m.created_at)+'</small>'+
-      (reactionHtml?'<div class="chat-reactions">'+reactionHtml+'</div>':'')+'</div>';
-  }).join('') || '<div class="empty">Сообщений пока нет</div>';
+  var renderedHtml = messageRows.map(function(m) {
+    var mine = m.sender_id === ME.id;
+    var label = m.from_support ? 'Чат поддержки' : ((m.profiles || {}).display_name || 'Участник');
+    var body = linkifyMessageText(m.body || '');
+    var files = (m.attachments || []).map(chatAttachmentHtml).join('');
+    var groups = reactionMap[m.id] || {};
+
+    var reactionHtml = CHAT_REACTIONS.filter(function(e) {
+      return !!groups[e];
+    }).map(function(e) {
+      var x = groups[e];
+      return '<button class="chat-reaction' + (x.mine ? ' mine' : '') +
+        '" data-react-message="' + m.id + '" data-react-emoji="' + e + '">' +
+        e + ' <span>' + x.count + '</span></button>';
+    }).join('');
+
+    var quickHtml = quick.map(function(e) {
+      return '<button class="chat-picker-emoji" data-react-message="' + m.id +
+        '" data-react-emoji="' + e + '">' + e + '</button>';
+    }).join('');
+
+    var allHtml = CHAT_REACTIONS.map(function(e) {
+      return '<button class="chat-picker-emoji" data-react-message="' + m.id +
+        '" data-react-emoji="' + e + '">' + e + '</button>';
+    }).join('');
+
+    return '<div class="bubble' + (mine ? ' mine' : '') +
+      '" data-message-bubble data-message-id="' + esc(m.id) + '">' +
+      '<div class="chat-reaction-tools"><div class="chat-reaction-quick">' +
+      quickHtml + '<button class="chat-picker-more" data-react-more>＋</button></div>' +
+      '<div class="chat-reaction-expanded" hidden>' + allHtml + '</div></div>' +
+      (body ? '<div class="message-body">' + body + '</div>' : '') +
+      files + '<small>' + (mine ? 'Вы' : esc(label)) + ' · ' +
+      dateF(m.created_at) + '</small>' +
+      (reactionHtml ? '<div class="chat-reactions">' + reactionHtml + '</div>' : '') +
+      '</div>';
+  }).join('');
+
+  if (appendOnly) {
+    if (box.querySelector('.empty')) box.innerHTML = '';
+    if (renderedHtml) box.insertAdjacentHTML('beforeend', renderedHtml);
+  } else {
+    box.innerHTML = renderedHtml || '<div class="empty">Сообщений пока нет</div>';
+  }
 
   if (!cachedOnly && previousMessageIds.size) {
-    box.querySelectorAll('[data-message-id]').forEach(function(el){
+    box.querySelectorAll('[data-message-id]').forEach(function(el) {
       var id = el.getAttribute('data-message-id');
       if (!previousMessageIds.has(id)) {
         animateInomestoElement(el, 0, 12, 220);
@@ -1831,31 +1919,130 @@ async function renderMessageRows(messageRows, conversationId, cachedOnly) {
     });
   }
 
-  box.scrollTop=box.scrollHeight;
-}
-async function loadMessages() {
-  if (!CURRENT_CONV || !ME) return;
-  var conversationId=CURRENT_CONV.id, userId=ME.id;
-  try {
-    var cached=await cacheGet('messages',conversationId);
-    if(cached && CURRENT_CONV && CURRENT_CONV.id===conversationId && ME && ME.id===userId) {
-      await renderMessageRows(cached,conversationId,true);
-    }
-    var r=await sb.from('messages').select('id,body,attachments,from_support,sender_id,created_at,profiles(display_name)')
-      .eq('conversation_id',conversationId).order('created_at',{ascending:false}).limit(300);
-    if(r.error) throw r.error;
-    var messageRows=(r.data||[]).reverse();
-    if(!CURRENT_CONV || CURRENT_CONV.id!==conversationId || !ME || ME.id!==userId) return;
-    await cachePut('messages',conversationId,messageRows.slice(-10));
-    await renderMessageRows(messageRows,conversationId,false);
-    if(CURRENT_CONV && CURRENT_CONV.id===conversationId) { await markRead('conversation',conversationId); CONV_UNREAD[conversationId]=0; renderConvList(); }
-  } catch(e) {
-    if(CURRENT_CONV && CURRENT_CONV.id===conversationId && ME && ME.id===userId) {
-      var existing=$('#messages');
-      if(!existing.innerHTML || existing.innerHTML.indexOf('bubble')<0) existing.innerHTML='<div class="sub">Не удалось загрузить сообщения. '+esc(e.message||e)+'</div>';
-    }
+  if (!appendOnly || wasAtBottom) {
+    box.scrollTop = box.scrollHeight;
   }
 }
+
+async function loadMessages(forceFull) {
+  if (!CURRENT_CONV || !ME) return;
+
+  var conversationId = CURRENT_CONV.id;
+  var userId = ME.id;
+
+  if (CHAT_LOAD_INFLIGHT[conversationId]) return;
+  CHAT_LOAD_INFLIGHT[conversationId] = true;
+
+  try {
+    var initialLoad = !!forceFull || !CHAT_LAST_MESSAGE_AT[conversationId];
+
+    if (initialLoad) {
+      var cached = await cacheGet('messages', conversationId);
+
+      if (cached && CURRENT_CONV && CURRENT_CONV.id === conversationId &&
+          ME && ME.id === userId) {
+        await renderMessageRows(cached, conversationId, true, false);
+      }
+
+      if (!CURRENT_CONV || CURRENT_CONV.id !== conversationId ||
+          !ME || ME.id !== userId) return;
+
+      var requestStartedAt = new Date().toISOString();
+
+      var r = await sb.from('messages')
+        .select('id,body,attachments,from_support,sender_id,created_at,profiles(display_name)')
+        .eq('conversation_id', conversationId)
+        .order('created_at', { ascending: false })
+        .limit(300);
+
+      if (r.error) throw r.error;
+
+      var messageRows = (r.data || []).reverse();
+
+      if (!CURRENT_CONV || CURRENT_CONV.id !== conversationId ||
+          !ME || ME.id !== userId) return;
+
+      CHAT_LAST_MESSAGE_AT[conversationId] =
+        messageRows.length ? messageRows[messageRows.length - 1].created_at : requestStartedAt;
+
+      await cachePut('messages', conversationId, messageRows.slice(-10));
+      await renderMessageRows(messageRows, conversationId, false, false);
+
+      if (CURRENT_CONV && CURRENT_CONV.id === conversationId) {
+        await markRead('conversation', conversationId);
+        CONV_UNREAD[conversationId] = 0;
+        renderConvList();
+      }
+
+      return;
+    }
+
+    var since = CHAT_LAST_MESSAGE_AT[conversationId];
+
+    var r = await sb.from('messages')
+      .select('id,body,attachments,from_support,sender_id,created_at,profiles(display_name)')
+      .eq('conversation_id', conversationId)
+      .gte('created_at', since)
+      .order('created_at', { ascending: true })
+      .limit(300);
+
+    if (r.error) throw r.error;
+
+    if (!CURRENT_CONV || CURRENT_CONV.id !== conversationId ||
+        !ME || ME.id !== userId) return;
+
+    var received = r.data || [];
+
+    if (received.length) {
+      CHAT_LAST_MESSAGE_AT[conversationId] =
+        received[received.length - 1].created_at;
+
+      var box = $('#messages');
+      var displayedIds = new Set(
+        Array.from(box.querySelectorAll('[data-message-id]')).map(function(el) {
+          return el.getAttribute('data-message-id');
+        })
+      );
+
+      var newRows = received.filter(function(m) {
+        return !displayedIds.has(m.id);
+      });
+
+      if (newRows.length) {
+        var cachedRows = await cacheGet('messages', conversationId) || [];
+        var combined = cachedRows.concat(newRows);
+        var cacheIds = new Set();
+
+        combined = combined.filter(function(m) {
+          if (cacheIds.has(m.id)) return false;
+          cacheIds.add(m.id);
+          return true;
+        });
+
+        await cachePut('messages', conversationId, combined.slice(-10));
+        await renderMessageRows(newRows, conversationId, false, true);
+
+        if (CURRENT_CONV && CURRENT_CONV.id === conversationId) {
+          await markRead('conversation', conversationId);
+          CONV_UNREAD[conversationId] = 0;
+          renderConvList();
+        }
+      }
+    }
+  } catch (e) {
+    if (CURRENT_CONV && CURRENT_CONV.id === conversationId &&
+        ME && ME.id === userId) {
+      var existing = $('#messages');
+      if (!existing.innerHTML || existing.innerHTML.indexOf('bubble') < 0) {
+        existing.innerHTML = '<div class="sub">Не удалось загрузить сообщения. ' +
+          esc(e.message || e) + '</div>';
+      }
+    }
+  } finally {
+    delete CHAT_LOAD_INFLIGHT[conversationId];
+  }
+}
+
 function stopVoiceRecording() {
   if (CHAT_RECORD_TIMER) clearTimeout(CHAT_RECORD_TIMER);
   CHAT_RECORD_TIMER = null;
@@ -2015,6 +2202,51 @@ $('#sendMsg').onclick = sendMessage;
 $('#msgInput').addEventListener('keydown', function (e) { if (e.key === 'Enter') sendMessage(); });
 
 $('#messages').addEventListener('click', async function (e) {
+  var messageLink = e.target.closest('a.message-link');
+
+  if (messageLink) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    try {
+      var clickedUrl = new URL(messageLink.href);
+
+      if (clickedUrl.protocol !== 'http:' && clickedUrl.protocol !== 'https:') {
+        return;
+      }
+
+      var canonicalUrl = new URL(siteUrl());
+      var normalizePath = function (path) {
+        return path.replace(/\/+$/, '') || '/';
+      };
+
+      var isInviteLink =
+        clickedUrl.origin === canonicalUrl.origin &&
+        normalizePath(clickedUrl.pathname) === normalizePath(canonicalUrl.pathname) &&
+        clickedUrl.searchParams.has('invite');
+
+      if (isInviteLink) {
+        await acceptInviteToken(clickedUrl.searchParams.get('invite'));
+        return;
+      }
+
+      if (
+        isNativeApp() &&
+        window.NativeAuthBridge &&
+        window.NativeAuthBridge.Browser &&
+        typeof window.NativeAuthBridge.Browser.open === 'function'
+      ) {
+        await window.NativeAuthBridge.Browser.open({ url: clickedUrl.href });
+      } else {
+        window.open(clickedUrl.href, '_blank', 'noopener,noreferrer');
+      }
+    } catch (err) {
+      fail('Не удалось открыть ссылку: ' + (err.message || err));
+    }
+
+    return;
+  }
+
   var more = e.target.closest('[data-react-more]');
   if (more) {
     e.preventDefault();
@@ -2042,7 +2274,7 @@ $('#messages').addEventListener('click', async function (e) {
         ? await sb.from('message_reactions').delete().eq('id', existing.data.id)
         : await sb.from('message_reactions').insert({ message_id: messageId, user_id: ME.id, emoji: emoji });
       if (result.error) throw result.error;
-      await loadMessages();
+      await loadMessages(true);
     } catch (err) { fail('Не удалось сохранить реакцию: ' + (err.message || err)); btn.disabled = false; }
     return;
   }
@@ -2358,6 +2590,106 @@ document.addEventListener('contextmenu', function (e) {
   }
 });
 
+
+/* INOMESTO INVITE DIALOGS */
+
+function inviteDialogShell(content) {
+  var overlay = document.createElement('div');
+  overlay.className = 'inomesto-invite-overlay';
+  overlay.innerHTML =
+    '<div class="inomesto-invite-dialog" role="dialog" aria-modal="true">' +
+    content + '</div>';
+
+  document.body.appendChild(overlay);
+
+  overlay.addEventListener('click', function(e) {
+    if (e.target === overlay) overlay.remove();
+  });
+
+  return overlay;
+}
+
+function chooseInviteType() {
+  return new Promise(function(resolve) {
+    var overlay = inviteDialogShell(
+      '<button class="inomesto-invite-close" data-choice="cancel" aria-label="Закрыть">×</button>' +
+      '<div class="inomesto-invite-icon">🔗</div>' +
+      '<h3>Создать ссылку-приглашение</h3>' +
+      '<p>Выбери, сколько раз можно использовать эту ссылку</p>' +
+      '<button class="inomesto-invite-option" data-choice="single">' +
+        '<span><b>Одноразовая ссылка</b><small>Можно вступить только один раз</small></span><span>›</span>' +
+      '</button>' +
+      '<button class="inomesto-invite-option" data-choice="multiple">' +
+        '<span><b>Многоразовая ссылка</b><small>Можно приглашать нескольких участников</small></span><span>›</span>' +
+      '</button>' +
+      '<button class="inomesto-invite-cancel" data-choice="cancel">Отмена</button>'
+    );
+
+    overlay.addEventListener('click', function(e) {
+      var button = e.target.closest('[data-choice]');
+      if (!button) return;
+      var choice = button.dataset.choice;
+      overlay.remove();
+      resolve(choice === 'single' || choice === 'multiple' ? choice : null);
+    });
+  });
+}
+
+async function showInviteLink(url) {
+  var overlay = inviteDialogShell(
+    '<button class="inomesto-invite-close" data-invite-close aria-label="Закрыть">×</button>' +
+    '<div class="inomesto-invite-icon">🔗</div>' +
+    '<h3>Ссылка-приглашение</h3>' +
+    '<p>Отправь эту ссылку человеку, которого хочешь пригласить</p>' +
+    '<input class="inomesto-invite-url" type="text" readonly aria-label="Ссылка приглашения">' +
+    '<button class="btn primary wide" data-invite-copy>Скопировать ссылку</button>' +
+    '<button class="btn ghost wide" data-invite-share>Поделиться</button>' +
+    '<p class="inomesto-invite-status" aria-live="polite"></p>'
+  );
+
+  var input = overlay.querySelector('.inomesto-invite-url');
+  var status = overlay.querySelector('.inomesto-invite-status');
+  input.value = url;
+
+  overlay.querySelector('[data-invite-close]').addEventListener('click', function() {
+    overlay.remove();
+  });
+
+  overlay.querySelector('[data-invite-copy]').addEventListener('click', async function() {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        input.focus();
+        input.select();
+        if (!document.execCommand('copy')) throw new Error('copy failed');
+      }
+      status.textContent = 'Ссылка скопирована!';
+    } catch (e) {
+      input.focus();
+      input.select();
+      status.textContent = 'Не удалось скопировать автоматически. Выдели ссылку и скопируй её вручную.';
+    }
+  });
+
+  overlay.querySelector('[data-invite-share]').addEventListener('click', async function() {
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: 'Ссылка-приглашение в Inomesto', url: url });
+      } else if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(url);
+        status.textContent = 'Ссылка скопирована!';
+      } else {
+        input.focus();
+        input.select();
+        status.textContent = 'Выдели ссылку и скопируй её вручную.';
+      }
+    } catch (e) {
+      if (e.name !== 'AbortError') status.textContent = 'Не удалось открыть меню отправки.';
+    }
+  });
+}
+
 /* ================= ОБРАБОТЧИК КЛИКОВ ================= */
 document.addEventListener('click', async function (e) {
   var t = e.target.closest('[data-like],[data-cmt],[data-report],[data-del],[data-open-space],[data-open-channel],[data-back-spaces],[data-join],[data-invite],[data-del-space],[data-conv],[data-verdict],[data-cancel-del],[data-open-support],[data-req],[data-member-admin],[data-member-kick],[data-member-ban],[data-comment-send],[data-chat-back]');
@@ -2405,11 +2737,25 @@ document.addEventListener('click', async function (e) {
     CURRENT_SPACE = null; loadSpaces(); return;
   }
   if (d.invite) {
-    var single = confirm('Одноразовая ссылка?\nОК — одноразовая, Отмена — многоразовая.');
-    var token = Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
-    var ir = await sb.from('space_invites').insert({ space_id: d.invite, token: token, single_use: single, created_by: ME.id });
+    var inviteType = await chooseInviteType();
+    if (!inviteType) return;
+
+    var token = Math.random().toString(36).slice(2, 10) +
+      Math.random().toString(36).slice(2, 10);
+
+    var ir = await sb.from('space_invites').insert({
+      space_id: d.invite,
+      token: token,
+      single_use: inviteType === 'single',
+      created_by: ME.id
+    });
+
     if (ir.error) return fail(ir.error.message);
-    prompt('Ссылка-приглашение (скопируйте):', location.origin + location.pathname + '?invite=' + token);
+
+    var inviteUrl = new URL(siteUrl());
+    inviteUrl.searchParams.set('invite', token);
+
+    await showInviteLink(inviteUrl.href);
     return;
   }
   if (d.delSpace) {
@@ -2489,13 +2835,62 @@ $('#runDiag').onclick = async function () {
   $('#diagOut').innerHTML = out.join('<br>');
 };
 
+var INVITE_PROCESSING = false;
+
+async function acceptInviteToken(token) {
+  if (!ME) {
+    toast('Сначала войдите в аккаунт');
+    return false;
+  }
+
+  if (!token || INVITE_PROCESSING) return false;
+
+  INVITE_PROCESSING = true;
+
+  try {
+    var r = await sb.rpc('join_by_invite_space', { tok: token });
+
+    if (r.error) {
+      toast(r.error.message || 'Не удалось принять приглашение');
+      return false;
+    }
+
+    if (!r.data) {
+      toast('Не удалось определить пространство');
+      return false;
+    }
+
+    toast('Вы вступили');
+    await loadSpaces();
+    await openSpaceById(r.data);
+    return true;
+  } catch (e) {
+    fail(e.message || e);
+    return false;
+  } finally {
+    INVITE_PROCESSING = false;
+  }
+}
+
 async function checkInvite() {
-  var m = location.search.match(/[?&]invite=([^&]+)/);
-  if (!m || !ME) return;
-  var r = await sb.rpc('join_by_invite', { tok: decodeURIComponent(m[1]) });
-  toast(r.error ? r.error.message : r.data);
-  history.replaceState({}, '', location.pathname);
-  loadSpaces();
+  var params = new URLSearchParams(location.search || '');
+  var token = params.get('invite');
+
+  if (!token || !ME) return;
+
+  var accepted = await acceptInviteToken(token);
+
+  if (accepted) {
+    params.delete('invite');
+    var query = params.toString();
+    history.replaceState(
+      {},
+      '',
+      location.pathname + (query ? '?' + query : '') + location.hash
+    );
+  }
+
+  return accepted;
 }
 
 
@@ -2694,11 +3089,314 @@ function finishInomestoSplash() {
 }
 
 
+
+/* INOMESTO IMAGE VIEWER */
+(function () {
+  var viewer = null;
+  var image = null;
+  var stage = null;
+  var counter = null;
+  var info = null;
+  var items = [];
+  var current = 0;
+  var scale = 1;
+  var tx = 0;
+  var ty = 0;
+  var pointers = new Map();
+  var pinchStart = null;
+  var dragStart = null;
+  var lastTap = 0;
+
+  function createViewer() {
+    if (viewer) return;
+
+    viewer = document.createElement('div');
+    viewer.className = 'image-viewer';
+    viewer.hidden = true;
+    viewer.innerHTML =
+      '<div class="image-viewer-top">' +
+        '<button type="button" data-iv="close" aria-label="Закрыть"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>' +
+        '<span class="image-viewer-counter"></span>' +
+        '<div class="image-viewer-tools">' +
+          '<button type="button" data-iv="info" aria-label="Информация"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg></button>' +
+          '<button type="button" data-iv="share" aria-label="Поделиться"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V3M7 8l5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg></button>' +
+          '<button type="button" data-iv="save" aria-label="Сохранить"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 19h14"/></svg></button>' +
+        '</div>' +
+      '</div>' +
+      '<button type="button" class="image-viewer-arrow prev" data-iv="prev" aria-label="Предыдущее фото"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg></button>' +
+      '<div class="image-viewer-stage">' +
+        '<img class="image-viewer-image" alt="" draggable="false">' +
+      '</div>' +
+      '<button type="button" class="image-viewer-arrow next" data-iv="next" aria-label="Следующее фото"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg></button>' +
+      '<div class="image-viewer-info" hidden></div>' +
+      '<div class="image-viewer-hint">Два касания или два пальца — увеличить · Свайп — переместить</div>';
+
+    document.body.appendChild(viewer);
+
+    stage = viewer.querySelector('.image-viewer-stage');
+    image = viewer.querySelector('.image-viewer-image');
+    counter = viewer.querySelector('.image-viewer-counter');
+    info = viewer.querySelector('.image-viewer-info');
+
+    viewer.addEventListener('click', function (e) {
+      var button = e.target.closest('[data-iv]');
+      if (button) {
+        e.preventDefault();
+        e.stopPropagation();
+        var action = button.getAttribute('data-iv');
+        if (action === 'close') closeViewer();
+        if (action === 'prev') showImage(current - 1);
+        if (action === 'next') showImage(current + 1);
+        if (action === 'save') saveImage();
+        if (action === 'share') shareImage();
+        if (action === 'info') toggleInfo();
+        return;
+      }
+      if (e.target === viewer) closeViewer();
+    });
+
+    image.addEventListener('dblclick', function (e) {
+      e.preventDefault();
+      if (scale > 1) resetZoom();
+      else setZoom(2.5, 0, 0);
+    });
+
+    stage.addEventListener('pointerdown', pointerDown);
+    stage.addEventListener('pointermove', pointerMove);
+    stage.addEventListener('pointerup', pointerEnd);
+    stage.addEventListener('pointercancel', pointerEnd);
+
+    stage.addEventListener('wheel', function (e) {
+      e.preventDefault();
+      setZoom(scale * (e.deltaY < 0 ? 1.2 : 0.83), 0, 0);
+    }, { passive: false });
+
+    stage.addEventListener('click', function (e) {
+      var now = Date.now();
+      if (now - lastTap < 300) {
+        if (scale > 1) resetZoom();
+        else setZoom(2.5, 0, 0);
+      }
+      lastTap = now;
+    });
+
+    document.addEventListener('keydown', function (e) {
+      if (!viewer || viewer.hidden) return;
+      if (e.key === 'Escape') closeViewer();
+      if (e.key === 'ArrowLeft') showImage(current - 1);
+      if (e.key === 'ArrowRight') showImage(current + 1);
+    });
+  }
+
+  function updateTransform() {
+    if (!image) return;
+    image.style.transform =
+      'translate3d(' + tx + 'px,' + ty + 'px,0) scale(' + scale + ')';
+  }
+
+  function resetZoom() {
+    scale = 1;
+    tx = 0;
+    ty = 0;
+    updateTransform();
+  }
+
+  function setZoom(next, dx, dy) {
+    scale = Math.max(1, Math.min(5, next));
+    if (scale === 1) {
+      tx = 0;
+      ty = 0;
+    } else {
+      tx += dx || 0;
+      ty += dy || 0;
+    }
+    updateTransform();
+  }
+
+  function showImage(index) {
+    if (!items.length) return;
+    current = (index + items.length) % items.length;
+    var item = items[current];
+
+    resetZoom();
+    info.hidden = true;
+    image.src = item.src;
+    image.alt = item.alt || 'Фотография';
+    counter.textContent = (current + 1) + ' / ' + items.length;
+
+    viewer.querySelector('[data-iv="prev"]').hidden = items.length < 2;
+    viewer.querySelector('[data-iv="next"]').hidden = items.length < 2;
+
+    info.textContent = (item.alt || 'Фотография') +
+      (image.naturalWidth ? ' · ' + image.naturalWidth + ' × ' + image.naturalHeight : '');
+
+    image.onload = function () {
+      info.textContent = (item.alt || 'Фотография') +
+        ' · ' + image.naturalWidth + ' × ' + image.naturalHeight;
+    };
+  }
+
+  function openViewer(list, index) {
+    createViewer();
+    items = list;
+    viewer.hidden = false;
+    document.body.classList.add('image-viewer-open');
+    showImage(index);
+  }
+
+  function closeViewer() {
+    if (!viewer || viewer.hidden) return;
+    viewer.hidden = true;
+    image.removeAttribute('src');
+    document.body.classList.remove('image-viewer-open');
+    info.hidden = true;
+    pointers.clear();
+    resetZoom();
+  }
+
+  function toggleInfo() {
+    info.hidden = !info.hidden;
+  }
+
+  function currentItem() {
+    return items[current] || null;
+  }
+
+  async function saveImage() {
+    var item = currentItem();
+    if (!item) return;
+
+    try {
+      var response = await fetch(item.src);
+      if (!response.ok) throw new Error('Не удалось получить файл');
+      var blob = await response.blob();
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = item.alt || 'inomesto-photo';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 30000);
+    } catch (e) {
+      window.open(item.src, '_blank', 'noopener');
+    }
+  }
+
+  async function shareImage() {
+    var item = currentItem();
+    if (!item) return;
+
+    try {
+      if (navigator.share) {
+        if (navigator.canShare && window.File) {
+          try {
+            var response = await fetch(item.src);
+            var blob = await response.blob();
+            var file = new File([blob], item.alt || 'photo.jpg', {
+              type: blob.type || 'image/jpeg'
+            });
+            if (navigator.canShare({ files: [file] })) {
+              await navigator.share({ files: [file], title: item.alt || 'Фото' });
+              return;
+            }
+          } catch (_) {}
+        }
+        await navigator.share({ title: item.alt || 'Фото', url: item.src });
+        return;
+      }
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(item.src);
+        info.textContent = 'Ссылка на фотографию скопирована';
+        info.hidden = false;
+      } else {
+        window.open(item.src, '_blank', 'noopener');
+      }
+    } catch (e) {
+      if (e.name !== 'AbortError') {
+        info.textContent = 'Не удалось поделиться фотографией';
+        info.hidden = false;
+      }
+    }
+  }
+
+  function pointerDown(e) {
+    if (e.target !== image) return;
+    e.preventDefault();
+    stage.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (pointers.size === 1) {
+      dragStart = { x: e.clientX, y: e.clientY, tx: tx, ty: ty };
+    } else if (pointers.size === 2) {
+      var p = Array.from(pointers.values());
+      pinchStart = {
+        distance: Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y),
+        scale: scale
+      };
+    }
+  }
+
+  function pointerMove(e) {
+    if (!pointers.has(e.pointerId)) return;
+    e.preventDefault();
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (pointers.size === 2 && pinchStart) {
+      var p = Array.from(pointers.values());
+      var distance = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
+      setZoom(pinchStart.scale * distance / Math.max(1, pinchStart.distance), 0, 0);
+    } else if (pointers.size === 1 && dragStart && scale > 1) {
+      var point = pointers.get(e.pointerId);
+      tx = dragStart.tx + point.x - dragStart.x;
+      ty = dragStart.ty + point.y - dragStart.y;
+      updateTransform();
+    }
+  }
+
+  function pointerEnd(e) {
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinchStart = null;
+    if (!pointers.size) dragStart = null;
+  }
+
+  document.addEventListener('click', function (e) {
+    if (viewer && !viewer.hidden) return;
+
+    var target = e.target.closest('.chat-image-link, .post-img');
+    if (!target) return;
+
+    var img = target.matches('img') ? target : target.querySelector('img');
+    if (!img) return;
+
+    var scope = img.closest('.post') || img.closest('[data-message-bubble]');
+    var gallery = scope
+      ? Array.from(scope.querySelectorAll('.post-img, .chat-image-link img'))
+      : [img];
+
+    var list = gallery.map(function (node) {
+      return {
+        src: node.currentSrc || node.src,
+        alt: node.alt || 'Фотография'
+      };
+    }).filter(function (item) { return !!item.src; });
+
+    var index = gallery.indexOf(img);
+    if (!list.length) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    openViewer(list, Math.max(0, index));
+  }, true);
+
+})();
+
 startInomestoSplash();
 
 setupNativeAuth()
   .then(function () { return boot(); })
-  .then(checkInvite)
   .catch(function (e) { fail('Запуск не удался: ' + (e.message || e)); })
   .finally(function () { finishInomestoSplash(); });
 })();
