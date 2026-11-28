@@ -71,7 +71,7 @@ var sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, {
   }
 });
 
-var ME = null, STAGED = [], FEED = [], SIGNED = {}, SIGNED_EXPIRES = {}, AVATAR_URLS = {}, AVATAR_URL_EXPIRES = {}, SPACES = [], SPACE_SEARCH_RESULTS = [], SPACE_MY_ROLES = {}, SPACE_PENDING = {}, SPACE_SEARCH_TIMER = null, CONVS = [];
+var ME = null, STAGED = [], FEED = [], FAVORITE_POST_IDS = new Set(), FAVORITE_POSTS = [], FAVORITES_VIEW = false, SIGNED = {}, SIGNED_EXPIRES = {}, AVATAR_URLS = {}, AVATAR_URL_EXPIRES = {}, SPACES = [], SPACE_SEARCH_RESULTS = [], SPACE_MY_ROLES = {}, SPACE_PENDING = {}, SPACE_SEARCH_TIMER = null, CONVS = [];
 var CHAT_STAGED = [], CHAT_SENDING = false;
 var CHAT_LAST_MESSAGE_AT = {};
 var CHAT_LOAD_INFLIGHT = {};
@@ -813,6 +813,7 @@ async function afterLogin(user) {
     return;
   }
   await loadNotificationPrefs();
+  await loadFavoritePostIds();
   await initNativePush();
   showScreen('app');
   startNotificationPolling();
@@ -856,6 +857,7 @@ $('#saveOnboarding').onclick = async function () {
     if (r.error) return toast(r.error.message.indexOf('duplicate') >= 0 ? 'Этот username уже занят' : r.error.message);
     ME = r.data;
     await loadNotificationPrefs();
+  await loadFavoritePostIds();
   await initNativePush();
     showScreen('app');
     startNotificationPolling();
@@ -945,7 +947,14 @@ function postHtml(p) {
     (!channelPost && a.is_verified ? '<span class="badge">✓</span>' : '') +
     (channelPost ? '<div>Канал · ' + dateF(p.created_at) + '</div>' : '<div>@' + esc(a.username || '—') + ' · ' + dateF(p.created_at) + '</div>') +
     '</div>' +
-    '<button class="act" data-report="' + p.id + '">Жалоба</button></div>';
+    '<div class="post-menu-wrap">' +
+    '<button class="act post-menu-trigger" data-post-menu="' + p.id + '" aria-label="Меню публикации" aria-expanded="false">•••</button>' +
+    '<div class="post-menu" data-post-menu-list="' + p.id + '" hidden>' +
+    '<button type="button" data-report="' + p.id + '">Пожаловаться на пост</button>' +
+    '<button type="button" data-share-post="' + p.id + '">Поделиться постом</button>' +
+    '<button type="button" data-favorite-post="' + p.id + '">' +
+    (FAVORITE_POST_IDS.has(p.id) ? 'Убрать из избранного' : 'Сохранить в избранное') +
+    '</button></div></div></div>';
 
   if (p.content) html += '<div class="post-text">' + esc(p.content) + '</div>';
 
@@ -1101,7 +1110,7 @@ async function loadSpaces() {
       var r = await sb.from('spaces')
         .select('id,type,name,description,privacy,comments_enabled,is_archived,owner_id,avatar_url,' +
                 'owner:profiles!spaces_owner_id_fkey(display_name,username),members:space_members(count)')
-        .in('id', ids).eq('type', 'channel').order('created_at', { ascending: false });
+        .in('id', ids).order('created_at', { ascending: false });
       if (r.error) { fail('Каналы не загрузились: ' + r.error.message); return; }
       rows = r.data || [];
     }
@@ -1151,40 +1160,66 @@ async function searchSpaces(value) {
 }
 
 function spaceCardHtml(s) {
-  var joined = !!s._myRole;
-  var action = joined
-    ? '<button class="btn primary" data-open-space="' + s.id + '">Открыть</button>'
+  var action = s._myRole
+    ? ''
     : s._pending
       ? '<span class="badge gray">Заявка отправлена</span>'
-      : '<button class="btn primary" data-join="' + s.id + '">' +
+      : '<button class="btn primary space-join-btn" data-join="' + s.id + '">' +
         (s.privacy === 'private' ? 'Запросить доступ' : (s.type === 'channel' ? 'Подписаться' : 'Вступить')) +
         '</button>';
-  return '<div class="card space-card"><div class="space-row"><div class="space-ico">' + (s.avatar_url ? avatarMarkup({display_name:s.name,avatar_url:s.avatar_url}, 'space-avatar') : ini(s.name)) + '</div>' +
-    '<div class="grow"><div><b>' + esc(s.name) + '</b> <span class="badge gray">' + (s.type === 'channel' ? 'Канал' : 'Сообщество') + '</span>' +
-    ' <span class="badge gray">' + (s.privacy === 'private' ? 'Закрытое' : 'Открытое') + '</span>' +
-    (s.is_archived ? ' <span class="badge gray">В архиве</span>' : '') + '</div>' +
-    '<div class="sub">' + nf(s._count) + ' участников · владелец @' + esc((s.owner || {}).username || '—') + '</div>' +
-    (s.description ? '<div class="space-description">' + esc(s.description) + '</div>' : '') +
-    ((s._unread && ((NOTIF_PREFS.space_badges && s._unread.posts) || (NOTIF_PREFS.comment_badges && s._unread.comments))) ? '<div class="unread-pills">' + (NOTIF_PREFS.space_badges && s._unread.posts ? '<span class="unread-badge">' + nf(s._unread.posts) + ' новых</span>' : '') + (NOTIF_PREFS.comment_badges && s._unread.comments ? '<span class="unread-badge comments">' + nf(s._unread.comments) + ' комментариев</span>' : '') + '</div>' : '') + '</div>' +
-    action + '</div></div>';
+
+  return '<div class="space-row-item" data-open-space="' + s.id + '">' +
+    '<div class="space-ico">' +
+      (s.avatar_url ? avatarMarkup({display_name:s.name,avatar_url:s.avatar_url}, 'space-avatar') : ini(s.name)) +
+    '</div>' +
+    '<div class="space-row-content">' +
+      '<div class="space-row-title"><b>' + esc(s.name) + '</b>' +
+        '<span class="badge gray">' + (s.type === 'channel' ? 'Канал' : 'Сообщество') + '</span>' +
+        (s.is_archived ? '<span class="badge gray">В архиве</span>' : '') +
+      '</div>' +
+      '<div class="sub">' + nf(s._count) + ' участников · ' +
+        (s.description ? esc(s.description) : ('владелец @' + esc((s.owner || {}).username || '—'))) +
+      '</div>' +
+      ((s._unread && ((NOTIF_PREFS.space_badges && s._unread.posts) || (NOTIF_PREFS.comment_badges && s._unread.comments)))
+        ? '<div class="unread-pills">' +
+          (NOTIF_PREFS.space_badges && s._unread.posts ? '<span class="unread-badge">' + nf(s._unread.posts) + ' новых</span>' : '') +
+          (NOTIF_PREFS.comment_badges && s._unread.comments ? '<span class="unread-badge comments">' + nf(s._unread.comments) + ' комментариев</span>' : '') +
+        '</div>' : '') +
+    '</div>' + action +
+  '</div>';
 }
 
 function spaceSectionHtml(title, hint, items, emptyText) {
-  return '<section class="space-section"><div class="space-section-head"><div><h2>' + title + '</h2><p class="muted">' + hint + '</p></div>' +
+  return '<section class="space-section">' +
+    '<div class="space-section-head"><div><h2>' + title + '</h2><p class="muted">' + hint + '</p></div>' +
     '<span class="section-count">' + items.length + '</span></div>' +
-    (items.length ? items.map(spaceCardHtml).join('') : '<div class="card empty space-empty">' + emptyText + '</div>') +
+    (items.length
+      ? '<div class="space-list">' + items.map(spaceCardHtml).join('') + '</div>'
+      : '<div class="card empty space-empty">' + emptyText + '</div>') +
     '</section>';
 }
 
 function renderSpaceList() {
+  FAVORITES_VIEW = false;
   document.body.classList.remove('channel-open');
   CURRENT_SPACE = null;
+
   var input = $('#spaceSearchInput');
   var term = input ? input.value.trim() : '';
-  var html = spaceSectionHtml('Мои каналы', 'Все каналы, на которые вы подписаны', SPACES,
-    'Вы пока не подписаны ни на один канал. Найдите интересный канал через поиск выше.');
+
+  var html = '<div class="favorite-entry" data-open-favorites="1">' +
+    '<span class="favorite-entry-icon">★</span>' +
+    '<span class="favorite-entry-text"><b>Избранное</b><small>Сохранённые публикации</small></span>' +
+    '<span class="favorite-entry-count">' + FAVORITE_POST_IDS.size + '</span>' +
+    '<span class="favorite-entry-arrow">›</span>' +
+  '</div>';
+
+  html += spaceSectionHtml('Мои каналы и сообщества', 'Ваши подписки и сообщества', SPACES,
+    'Вы пока не подписаны ни на один канал или сообщество. Найдите интересное через поиск выше.');
+
   if (term) html += spaceSectionHtml('Результаты поиска', 'Каналы и сообщества по вашему запросу', SPACE_SEARCH_RESULTS,
     'Ничего не найдено. Попробуйте другое название или ключевое слово.');
+
   $('#spaceView').innerHTML = html;
 }
 
@@ -2459,13 +2494,167 @@ $('#themeSelect').onchange = function () {
 
 $('#enableBrowserNotifications').onclick = requestBrowserNotifications;
 
+/* ================= ИЗБРАННОЕ ================= */
+async function loadFavoritePostIds() {
+  if (!ME) {
+    FAVORITE_POST_IDS = new Set();
+    return;
+  }
+  var userId = ME.id;
+  var r = await sb.from('post_favorites')
+    .select('post_id')
+    .eq('user_id', userId);
+  if (r.error) {
+    fail('Не удалось загрузить избранное: ' + r.error.message);
+    return;
+  }
+  if (!ME || ME.id !== userId) return;
+  FAVORITE_POST_IDS = new Set((r.data || []).map(function (x) { return x.post_id; }));
+}
+
+async function toggleFavoritePost(postId) {
+  if (!ME) return toast('Сначала войдите');
+
+  var saved = FAVORITE_POST_IDS.has(postId);
+  var r;
+
+  if (saved) {
+    r = await sb.from('post_favorites').delete()
+      .eq('user_id', ME.id).eq('post_id', postId);
+  } else {
+    r = await sb.from('post_favorites').insert({
+      user_id: ME.id,
+      post_id: postId
+    });
+  }
+
+  if (r.error) return fail('Не удалось изменить избранное: ' + r.error.message);
+
+  if (saved) {
+    FAVORITE_POST_IDS.delete(postId);
+    toast('Убрано из избранного');
+  } else {
+    FAVORITE_POST_IDS.add(postId);
+    toast('Сохранено в избранное');
+  }
+
+  if (FAVORITES_VIEW) loadFavoritePosts();
+  else if (CURRENT_SPACE) loadSpacePosts();
+  else loadFeed();
+}
+
+async function sharePost(postId) {
+  var url = new URL(siteUrl(), location.href);
+  url.searchParams.set('post', postId);
+  var link = url.toString();
+
+  try {
+    if (navigator.share) {
+      await navigator.share({ title: 'Публикация Inomesto', url: link });
+    } else if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(link);
+      toast('Ссылка скопирована');
+    } else {
+      prompt('Скопируйте ссылку на публикацию:', link);
+    }
+  } catch (e) {
+    if (e.name !== 'AbortError') prompt('Ссылка на публикацию:', link);
+  }
+}
+
+
+async function loadFavoritePosts() {
+  if (!ME) return toast('Сначала войдите');
+  var userId = ME.id;
+  FAVORITES_VIEW = true;
+  CURRENT_SPACE = null;
+  document.body.classList.remove('channel-open');
+
+  var box = $('#spaceView');
+  if (!box) return;
+
+  box.innerHTML = '<div class="card empty">Загружаем избранное…</div>';
+
+  try {
+    var saved = await sb.from('post_favorites')
+      .select('post_id,created_at')
+      .eq('user_id', userId)
+      .order('created_at', {ascending:false});
+
+    if (saved.error) throw saved.error;
+
+    if (!ME || ME.id !== userId || !FAVORITES_VIEW) return;
+
+    var ids = (saved.data || []).map(function (x) { return x.post_id; });
+    FAVORITE_POST_IDS = new Set(ids);
+
+    if (!ids.length) {
+      FAVORITE_POSTS = [];
+      box.innerHTML =
+        '<div class="favorites-heading"><button class="btn ghost" data-back-favorites="1">← Назад</button><h2>Избранное</h2></div>' +
+        '<div class="card empty">Здесь пока нет сохранённых публикаций. Откройте меню публикации и выберите «Сохранить в избранное».</div>';
+      return;
+    }
+
+    var postsResult = await sb.from('posts')
+      .select(POST_SELECT)
+      .in('id', ids);
+
+    if (postsResult.error) throw postsResult.error;
+
+    var byPostId = {};
+    (postsResult.data || []).forEach(function (p) { byPostId[p.id] = p; });
+    FAVORITE_POSTS = ids.map(function (id) { return byPostId[id]; }).filter(Boolean);
+
+    var spaceIds = Array.from(new Set(FAVORITE_POSTS.map(function (p) { return p.space_id; }).filter(Boolean)));
+    var spaceById = {};
+
+    if (spaceIds.length) {
+      var spacesResult = await sb.from('spaces')
+        .select('id,name,avatar_url,type')
+        .in('id', spaceIds);
+      if (!spacesResult.error) {
+        (spacesResult.data || []).forEach(function (sp) { spaceById[sp.id] = sp; });
+      }
+    }
+
+    FAVORITE_POSTS.forEach(function (p) {
+      p._space = p.space_id ? (spaceById[p.space_id] || null) : null;
+      p._spaceName = p._space ? p._space.name : '';
+    });
+
+    await signPaths(FAVORITE_POSTS);
+
+    var avatars = FAVORITE_POSTS.reduce(function (a, p) {
+      a.push(p.author || {});
+      if (p._space) a.push({display_name:p._space.name, avatar_url:p._space.avatar_url});
+      (p.comments || []).forEach(function (cm) { a.push(cm.author || {}); });
+      return a;
+    }, []);
+
+    await signAvatarPaths(avatars);
+
+    if (!ME || ME.id !== userId || !FAVORITES_VIEW) return;
+
+    box.innerHTML =
+      '<div class="favorites-heading"><button class="btn ghost" data-back-favorites="1">← Назад</button><h2>Избранное</h2></div>' +
+      (FAVORITE_POSTS.length
+        ? FAVORITE_POSTS.map(postHtml).join('')
+        : '<div class="card empty">Сохранённые публикации пока недоступны.</div>');
+  } catch (e) {
+    if (ME && ME.id === userId && FAVORITES_VIEW) {
+      box.innerHTML = '<div class="card empty">Не удалось загрузить избранное: ' + esc(e.message || e) + '</div>';
+    }
+  }
+}
+
 /* ================= ЖАЛОБЫ ================= */
 async function reportPost(postId) {
   if (!ME) return toast('Сначала войдите');
   if (!ME.can_report) return toast('Подача жалоб недоступна');
   var reason = prompt('Опишите причину жалобы:');
   if (!reason || !reason.trim()) return;
-  var p = FEED.filter(function (x) { return x.id === postId; })[0];
+  var p = FEED.concat(FAVORITE_POSTS).filter(function (x) { return x.id === postId; })[0];
   var r = await sb.from('reports').insert({
     reporter_id: ME.id, post_id: postId, space_id: (p && p.space_id) || null, reason: reason.trim()
   });
@@ -2692,12 +2881,41 @@ async function showInviteLink(url) {
 
 /* ================= ОБРАБОТЧИК КЛИКОВ ================= */
 document.addEventListener('click', async function (e) {
-  var t = e.target.closest('[data-like],[data-cmt],[data-report],[data-del],[data-open-space],[data-open-channel],[data-back-spaces],[data-join],[data-invite],[data-del-space],[data-conv],[data-verdict],[data-cancel-del],[data-open-support],[data-req],[data-member-admin],[data-member-kick],[data-member-ban],[data-comment-send],[data-chat-back]');
+  var menuTrigger = e.target.closest('[data-post-menu]');
+  if (menuTrigger) {
+    var menuId = menuTrigger.dataset.postMenu;
+    var postCard = menuTrigger.closest('.post');
+    var menu = postCard
+      ? postCard.querySelector('.post-menu[data-post-menu-list="' + menuId + '"]')
+      : null;
+    var opening = menu && menu.hidden;
+    $$('[data-post-menu-list]').forEach(function (item) { item.hidden = true; });
+    $$('[data-post-menu]').forEach(function (item) {
+      item.setAttribute('aria-expanded', 'false');
+    });
+    if (menu) {
+      menu.hidden = !opening;
+      menuTrigger.setAttribute('aria-expanded', String(!!opening));
+    }
+    return;
+  }
+
+  if (!e.target.closest('.post-menu')) {
+    $$('[data-post-menu-list]').forEach(function (item) { item.hidden = true; });
+    $$('[data-post-menu]').forEach(function (item) {
+      item.setAttribute('aria-expanded', 'false');
+    });
+  }
+
+  var t = e.target.closest('[data-open-favorites],[data-back-favorites],[data-like],[data-cmt],[data-favorite-post],[data-share-post],[data-report],[data-del],[data-open-space],[data-open-channel],[data-back-spaces],[data-join],[data-invite],[data-del-space],[data-conv],[data-verdict],[data-cancel-del],[data-open-support],[data-req],[data-member-admin],[data-member-kick],[data-member-ban],[data-comment-send],[data-chat-back]');
   if (!t) return;
   var d = t.dataset;
 
+  if (d.openFavorites) return loadFavoritePosts();
+  if (d.backFavorites) { renderSpaceList(); return; }
+
   if (d.like) {
-    var post = FEED.filter(function (p) { return p.id === d.like; })[0];
+    var post = FEED.concat(FAVORITE_POSTS).filter(function (p) { return p.id === d.like; })[0];
     var liked = post && (post.post_likes || []).some(function (l) { return l.user_id === ME.id; });
     if (liked) await sb.from('post_likes').delete().match({ post_id: d.like, user_id: ME.id });
     else await sb.from('post_likes').insert({ post_id: d.like, user_id: ME.id });
@@ -2705,6 +2923,8 @@ document.addEventListener('click', async function (e) {
     return;
   }
   if (d.cmt) { if (OPEN.has(d.cmt)) OPEN.delete(d.cmt); else OPEN.add(d.cmt); if (CURRENT_SPACE) loadSpacePosts(); else loadFeed(); return; }
+  if (d.favoritePost) return toggleFavoritePost(d.favoritePost);
+  if (d.sharePost) return sharePost(d.sharePost);
   if (d.report) return reportPost(d.report);
 
   if (d.del) {

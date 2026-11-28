@@ -1714,3 +1714,167 @@ select,
   font-size: 12px !important;
   overflow-wrap: anywhere;
 }
+
+
+/* Inomesto: compact channel/community list and favorites */
+.favorite-entry {
+  display:flex; align-items:center; gap:13px;
+  padding:13px 15px; margin:4px 0 22px;
+  border:1px solid var(--border); border-radius:15px;
+  background:var(--soft); cursor:pointer;
+}
+.favorite-entry-icon {
+  width:42px; height:42px; flex:0 0 42px;
+  display:grid; place-items:center; border-radius:13px;
+  background:var(--card); color:var(--accent); font-size:22px;
+}
+.favorite-entry-text { display:flex; flex:1; min-width:0; flex-direction:column; gap:3px; }
+.favorite-entry-text small { color:var(--muted); font-size:12px; }
+.favorite-entry-count { color:var(--muted); font-size:13px; }
+.favorite-entry-arrow { color:var(--muted); font-size:24px; }
+.favorite-entry:hover,.space-row-item:hover { background:var(--soft); }
+.space-list { display:flex; flex-direction:column; gap:0; }
+.space-row-item {
+  display:flex; align-items:center; gap:12px;
+  min-height:68px; padding:10px 8px;
+  border-bottom:1px solid var(--border);
+  cursor:pointer; transition:background .15s;
+}
+.space-row-content { flex:1; min-width:0; }
+.space-row-title { display:flex; align-items:center; flex-wrap:wrap; gap:6px; }
+.space-row-title .badge { font-size:10px; }
+.space-row-content .sub {
+  margin-top:4px; overflow:hidden; text-overflow:ellipsis;
+  white-space:nowrap; max-width:100%;
+}
+.space-join-btn { flex:0 0 auto; white-space:nowrap; }
+.favorites-heading {
+  display:flex; align-items:center; gap:12px; margin:4px 0 18px;
+}
+.favorites-heading h2 { margin:0; font-size:19px; }
+@media(max-width:760px) {
+  .space-row-item { gap:9px; padding:10px 4px; }
+  .space-row-item .space-ico { width:42px; height:42px; flex-basis:42px; }
+  .space-join-btn { padding:7px 9px; font-size:12px; }
+}
+
+
+
+/* Inomesto: polished post action menu */
+.post-menu-wrap {
+  position: relative;
+  flex: 0 0 auto;
+  margin-left: auto;
+  z-index: 20;
+}
+
+.post-menu-trigger {
+  width: 38px;
+  height: 38px;
+  min-width: 38px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted, #777);
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+
+.post-menu-trigger:hover,
+.post-menu-trigger[aria-expanded="true"] {
+  background: var(--line, #eeeeee);
+  color: inherit;
+}
+
+.post-menu {
+  position: absolute;
+  top: calc(100% + 5px);
+  right: 0;
+  width: 228px;
+  max-width: min(228px, calc(100vw - 32px));
+  padding: 6px;
+  border: 1px solid var(--line, #e5e5e5);
+  border-radius: 14px;
+  background: var(--card, #ffffff);
+  color: inherit;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, .16);
+  z-index: 100;
+  animation: postMenuAppear .14s ease-out;
+}
+
+.post-menu[hidden] {
+  display: none !important;
+}
+
+.post-menu button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 43px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+  transition: background .15s;
+}
+
+.post-menu button:hover {
+  background: var(--line, #eeeeee);
+}
+
+.post-menu button:active {
+  opacity: .7;
+}
+
+@keyframes postMenuAppear {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 600px) {
+  .post-menu {
+    width: 218px;
+  }
+}
+
+/* Fix: dropdown must not change post layout */
+.post-head {
+  position: relative;
+  min-width: 0;
+}
+
+.post-menu-wrap {
+  position: relative;
+  align-self: flex-start;
+}
+
+.post-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 5px;
+  transform-origin: top right;
+}
+
+.post-menu-trigger {
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.post-menu button {
+  flex-shrink: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
